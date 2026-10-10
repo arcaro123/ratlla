@@ -23,16 +23,15 @@ FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
 
-# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT AMB DESACTIVACIÓ DE MEMÒRIA CAU (?t=Timestamp)
+# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT AMB FETCH NET (SENSE PARÀMETRES A LA URL)
 js.window.eval(f"""
 window.latestGameState = null;
 window.firebaseUrl = "{FIREBASE_URL}";
 
-// Lectura contínua de Firebase desactivant la memòria cau
+// Lectura contínua de Firebase cada 300ms sense paràmetres invàlids
 setInterval(async () => {{
     try {{
-        let cacheBusterUrl = window.firebaseUrl + "?t=" + Date.now();
-        let res = await fetch(cacheBusterUrl, {{ cache: 'no-store' }});
+        let res = await fetch(window.firebaseUrl, {{ cache: 'no-store' }});
         if (res.ok) {{
             let text = await res.text();
             if (text && text !== "null") {{
@@ -42,7 +41,7 @@ setInterval(async () => {{
     }} catch(e) {{}}
 }}, 300);
 
-// Enviament de moviments actualitzant també la memòria local immediatament
+// Enviament de moviments a Firebase
 window.sendGameState = function(jsonStr) {{
     window.latestGameState = jsonStr;
     try {{
@@ -67,7 +66,7 @@ HIGHLIGHT_COLOR = (0, 220, 100)
 WIN_LINE_COLOR = (30, 200, 80)
 
 FONT = pygame.font.SysFont("arial", 20, bold=True)
-TITLE_FONT = pygame.font.SysFont("arial", 30, bold=True)
+TITLE_FONT = pygame.font.SysFont("arial", 28, bold=True)
 
 # Coordenades lògiques dels 24 punts
 POINTS_CONFIG = [
@@ -268,16 +267,16 @@ class TicTacToeOnline:
 def draw_board(game, my_role):
   SCREEN.fill(BG_COLOR)
 
-  # Títol centrat a dalt
+  # Títol a dalt de tot
   title = TITLE_FONT.render("Tres en ratlla Online", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
 
-  # Indicador del teu color (sense superposicions)
+  # Indicador del teu color a l'esquerra
   role_str = "BLANQUES" if my_role == "W" else "NEGRES"
   role_surface = FONT.render(f"Ets les: {role_str}", True, (0, 100, 200))
   SCREEN.blit(role_surface, (20, 60))
 
-  # Indicador del torn actual a la dreta
+  # Indicador de quin torn és a la dreta
   indicator_x = WIDTH - 45
   indicator_y = 70
   radius = 16
@@ -299,7 +298,6 @@ def draw_board(game, my_role):
         SCREEN, BLACK_BORDER, (indicator_x, indicator_y), radius, 2
     )
 
-  # Dibuix del tauler (línies)
   for layer in range(3):
     margin = 50 + layer * 70
     size = BOARD_SIZE - 2 * margin
@@ -322,7 +320,6 @@ def draw_board(game, my_role):
     p3 = POINT_POSITIONS[game.winning_line[2]]
     pygame.draw.line(SCREEN, WIN_LINE_COLOR, p1, p3, 10)
 
-  # Dibuix dels punts i les fitxes
   for point, pos in POINT_POSITIONS.items():
     owner = game.board[point]
     pygame.draw.circle(SCREEN, LINE_COLOR, pos, 6)
@@ -377,7 +374,7 @@ async def main():
   while running:
     clock.tick(30)
 
-    # Rebre moviments de Firebase des de JS
+    # Rebre estat actualitzat de Firebase des de JS
     remote_state = check_firebase_state()
     if remote_state:
       game.from_dict(remote_state)
@@ -405,8 +402,3 @@ async def main():
     await asyncio.sleep(0)
 
   pygame.quit()
-  sys.exit()
-
-
-if __name__ == "__main__":
-  asyncio.run(main())
