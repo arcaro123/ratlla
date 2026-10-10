@@ -18,10 +18,31 @@ OFFSET_Y = 100
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Tres en ratlla Online")
 
-# URL DE FIREBASE
+# LA TEVA URL DE FIREBASE
 FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
+
+# Injectar funcions JavaScript de connexió netes i segures
+js.eval("""
+window.fb_get = async function(url) {
+    try {
+        let res = await fetch(url);
+        return await res.text();
+    } catch(e) {
+        return null;
+    }
+};
+window.fb_put = async function(url, jsonString) {
+    try {
+        await fetch(url, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: jsonString
+        });
+    } catch(e) {}
+};
+""")
 
 # COLORS
 BG_COLOR = (240, 217, 181)
@@ -133,13 +154,11 @@ LINES_OF_THREE = [
 ]
 
 
-# PETICIONS HTTP SEGURES PER A PYGBAG / PYODIDE
 async def firebase_get():
   try:
-    res = await js.fetch(FIREBASE_URL)
-    text = await res.text()
-    if text and text != "null":
-      return json.loads(text)
+    res = await js.window.fb_get(FIREBASE_URL)
+    if res and str(res) != "null":
+      return json.loads(str(res))
   except Exception as e:
     print("Error llegint de Firebase:", e)
   return None
@@ -147,13 +166,7 @@ async def firebase_get():
 
 async def firebase_put(data):
   try:
-    body_str = json.dumps(data)
-    # Avaluació segura en JS per crear les opcions del PUT
-    opts = js.eval(
-        f"({{method: 'PUT', headers: {{'Content-Type':"
-        f" 'application/json'}}, body: {json.dumps(body_str)}}})"
-    )
-    await js.fetch(FIREBASE_URL, opts)
+    await js.window.fb_put(FIREBASE_URL, json.dumps(data))
   except Exception as e:
     print("Error escrivint a Firebase:", e)
 
@@ -182,7 +195,7 @@ class TicTacToeOnline:
     }
 
   def from_dict(self, data):
-    if not data:
+    if not data or not isinstance(data, dict):
       return
     if "board" in data and data["board"]:
       self.board = {str_to_point(k): v for k, v in data["board"].items()}
@@ -200,6 +213,7 @@ class TicTacToeOnline:
     return False
 
   def handle_click(self, point, my_role):
+    # Si ja hi ha guanyador o no és el teu torn, ignora el clic
     if self.winner or self.turn != my_role:
       return False
 
@@ -338,19 +352,14 @@ async def main():
   clock = pygame.time.Clock()
   game = TicTacToeOnline()
 
-  # DETECCIÓ SEGURA DE ROL PER LA URL
+  # DETECCIÓ DE ROL PER LA URL
   try:
     href = str(js.window.location.href)
     my_role = "B" if "#black" in href else "W"
   except Exception:
     my_role = "W"
 
-  # DIBUIXAR PRIMER FOTOGRAMA IMMEDIATAMENT PER EVITAR PANTALLA NEGRA
-  draw_board(game, my_role)
-  pygame.display.flip()
-  await asyncio.sleep(0)
-
-  # CARREGAR ESTAT INICIAL EN SEGON PLA
+  # Carregar estat inicial de Firebase
   initial_state = await firebase_get()
   if initial_state:
     game.from_dict(initial_state)
@@ -362,7 +371,7 @@ async def main():
     clock.tick(30)
     poll_counter += 1
 
-    # CONSULTAR FIREBASE CADA ~0.5 SEGONS
+    # Comprovar si hi ha canvis a Firebase cada ~0.5s
     if poll_counter % 15 == 0:
       remote_state = await firebase_get()
       if remote_state:
@@ -382,7 +391,7 @@ async def main():
             break
 
       elif event.type == pygame.KEYDOWN:
-        if event.key == pygame.K_r:
+        if event.key == pygame.K_r:  # Prem 'R' per reiniciar el tauler
           game = TicTacToeOnline()
           await firebase_put(game.to_dict())
 
