@@ -3,7 +3,6 @@ import json
 import math
 import sys
 import js
-from pyodide.http import pyfetch
 import pygame
 
 # Inicialització de Pygame
@@ -38,7 +37,7 @@ WIN_LINE_COLOR = (30, 200, 80)
 FONT = pygame.font.SysFont("arial", 20, bold=True)
 TITLE_FONT = pygame.font.SysFont("arial", 32, bold=True)
 
-# Coordenades lògiques dels 24 punts
+# Coordenades lògiques dels 24 punts del tauler
 POINTS_CONFIG = [
     (0, 0, 0),
     (0, 0, 1),
@@ -134,14 +133,13 @@ LINES_OF_THREE = [
 ]
 
 
-# CONNEXIÓ SEGURA AMB FIREBASE MITJANÇANT PYODIDE PYFETCH
+# CONNEXIÓ SEGURA NATIVA AMB FIREBASE
 async def firebase_get():
   try:
-    response = await pyfetch(FIREBASE_URL)
-    if response.status == 200:
-      data = await response.json()
-      if data and data != "null":
-        return data
+    res = await js.window.fetch(FIREBASE_URL)
+    text = await res.text()
+    if text and str(text) != "null":
+      return json.loads(str(text))
   except Exception as e:
     print("Error llegint de Firebase:", e)
   return None
@@ -149,12 +147,15 @@ async def firebase_get():
 
 async def firebase_put(data):
   try:
-    await pyfetch(
-        FIREBASE_URL,
-        method="PUT",
-        headers={"Content-Type": "application/json"},
-        body=json.dumps(data),
-    )
+    body_json_str = json.dumps(json.dumps(data))
+    js_code = f"""
+            fetch("{FIREBASE_URL}", {{
+                method: "PUT",
+                headers: {{"Content-Type": "application/json"}},
+                body: {body_json_str}
+            }});
+        """
+    js.window.eval(js_code)
   except Exception as e:
     print("Error escrivint a Firebase:", e)
 
@@ -351,7 +352,7 @@ async def main():
     clock.tick(30)
     poll_counter += 1
 
-    # Consultar Firebase cada 15 fotogrames (~0.5 segons)
+    # Consultar Firebase cada ~0.5 segons
     if poll_counter % 15 == 0:
       remote_state = await firebase_get()
       if remote_state:
@@ -371,7 +372,7 @@ async def main():
             break
 
       elif event.type == pygame.KEYDOWN:
-        if event.key == pygame.K_r:  # Reiniciar partida
+        if event.key == pygame.K_r:  # Prem 'R' per reiniciar
           game = TicTacToeOnline()
           await firebase_put(game.to_dict())
 
