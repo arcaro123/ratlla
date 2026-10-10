@@ -3,6 +3,7 @@ import json
 import math
 import sys
 import js
+from pyodide.http import pyfetch
 import pygame
 
 # Inicialització de Pygame
@@ -18,7 +19,7 @@ OFFSET_Y = 100
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Tres en ratlla Online")
 
-# URL DE FIREBASE
+# LA TEVA URL DE FIREBASE
 FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
@@ -133,13 +134,14 @@ LINES_OF_THREE = [
 ]
 
 
-# PETICIONS HTTP SEGURES PER A PYGBAG / PYODIDE
+# CONNEXIÓ SEGURA AMB FIREBASE MITJANÇANT PYODIDE PYFETCH
 async def firebase_get():
   try:
-    res = await js.fetch(FIREBASE_URL)
-    text = await res.text()
-    if text and text != "null":
-      return json.loads(text)
+    response = await pyfetch(FIREBASE_URL)
+    if response.status == 200:
+      data = await response.json()
+      if data and data != "null":
+        return data
   except Exception as e:
     print("Error llegint de Firebase:", e)
   return None
@@ -147,13 +149,12 @@ async def firebase_get():
 
 async def firebase_put(data):
   try:
-    body_str = json.dumps(data)
-    # Avaluació segura en JS per crear les opcions del PUT
-    opts = js.eval(
-        f"({{method: 'PUT', headers: {{'Content-Type':"
-        f" 'application/json'}}, body: {json.dumps(body_str)}}})"
+    await pyfetch(
+        FIREBASE_URL,
+        method="PUT",
+        headers={"Content-Type": "application/json"},
+        body=json.dumps(data),
     )
-    await js.fetch(FIREBASE_URL, opts)
   except Exception as e:
     print("Error escrivint a Firebase:", e)
 
@@ -182,9 +183,9 @@ class TicTacToeOnline:
     }
 
   def from_dict(self, data):
-    if not data:
+    if not data or not isinstance(data, dict):
       return
-    if "board" in data and data["board"]:
+    if "board" in data and isinstance(data["board"], dict):
       self.board = {str_to_point(k): v for k, v in data["board"].items()}
     self.turn = data.get("turn", "W")
     self.unplaced = data.get("unplaced", {"W": 7, "B": 7})
@@ -247,12 +248,10 @@ def draw_board(game, my_role):
   title = TITLE_FONT.render("Tres en ratlla Online", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 25))
 
-  # Indicador del teu color
   role_str = "BLANQUES" if my_role == "W" else "NEGRES"
   role_surface = FONT.render(f"Ets les: {role_str}", True, (0, 100, 200))
   SCREEN.blit(role_surface, (20, 25))
 
-  # Indicador de quin torn és
   indicator_x = WIDTH - 45
   indicator_y = 35
   radius = 18
@@ -338,22 +337,12 @@ async def main():
   clock = pygame.time.Clock()
   game = TicTacToeOnline()
 
-  # DETECCIÓ SEGURA DE ROL PER LA URL
+  # DETECCIÓ DE ROL PER LA URL
   try:
     href = str(js.window.location.href)
     my_role = "B" if "#black" in href else "W"
   except Exception:
     my_role = "W"
-
-  # DIBUIXAR PRIMER FOTOGRAMA IMMEDIATAMENT PER EVITAR PANTALLA NEGRA
-  draw_board(game, my_role)
-  pygame.display.flip()
-  await asyncio.sleep(0)
-
-  # CARREGAR ESTAT INICIAL EN SEGON PLA
-  initial_state = await firebase_get()
-  if initial_state:
-    game.from_dict(initial_state)
 
   poll_counter = 0
   running = True
@@ -362,7 +351,7 @@ async def main():
     clock.tick(30)
     poll_counter += 1
 
-    # CONSULTAR FIREBASE CADA ~0.5 SEGONS
+    # Consultar Firebase cada 15 fotogrames (~0.5 segons)
     if poll_counter % 15 == 0:
       remote_state = await firebase_get()
       if remote_state:
@@ -382,7 +371,7 @@ async def main():
             break
 
       elif event.type == pygame.KEYDOWN:
-        if event.key == pygame.K_r:
+        if event.key == pygame.K_r:  # Reiniciar partida
           game = TicTacToeOnline()
           await firebase_put(game.to_dict())
 
