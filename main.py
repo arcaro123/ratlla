@@ -23,12 +23,11 @@ FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
 
-# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT AMB FETCH NET (SENSE PARÀMETRES A LA URL)
+# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT
 js.window.eval(f"""
 window.latestGameState = null;
 window.firebaseUrl = "{FIREBASE_URL}";
 
-// Lectura contínua de Firebase cada 300ms sense paràmetres invàlids
 setInterval(async () => {{
     try {{
         let res = await fetch(window.firebaseUrl, {{ cache: 'no-store' }});
@@ -41,7 +40,6 @@ setInterval(async () => {{
     }} catch(e) {{}}
 }}, 300);
 
-// Enviament de moviments a Firebase
 window.sendGameState = function(jsonStr) {{
     window.latestGameState = jsonStr;
     try {{
@@ -102,8 +100,11 @@ def point_to_str(p):
 
 
 def str_to_point(s):
-  parts = s.split("_")
-  return (int(parts[0]), int(parts[1]), int(parts[2]))
+  try:
+    parts = s.split("_")
+    return (int(parts[0]), int(parts[1]), int(parts[2]))
+  except Exception:
+    return None
 
 
 def get_screen_coords(point):
@@ -193,7 +194,11 @@ class TicTacToeOnline:
 
   def to_dict(self):
     return {
-        "board": {point_to_str(k): v for k, v in self.board.items()},
+        "board": {
+            point_to_str(k): v
+            for k, v in self.board.items()
+            if v is not None
+        },
         "turn": self.turn,
         "unplaced": self.unplaced,
         "winner": self.winner,
@@ -207,13 +212,42 @@ class TicTacToeOnline:
   def from_dict(self, data):
     if not data or not isinstance(data, dict):
       return
-    if "board" in data and isinstance(data["board"], dict):
-      self.board = {str_to_point(k): v for k, v in data["board"].items()}
+
+    # Reiniciar sempre les 24 posicions per evitar KeyError
+    new_board = {p: None for p in POINTS_CONFIG}
+    raw_board = data.get("board")
+    if isinstance(raw_board, dict):
+      for k, v in raw_board.items():
+        pt = str_to_point(k)
+        if pt in new_board:
+          new_board[pt] = v
+    self.board = new_board
+
     self.turn = data.get("turn", "W")
-    self.unplaced = data.get("unplaced", {"W": 7, "B": 7})
+    if self.turn not in ("W", "B"):
+      self.turn = "W"
+
+    raw_unplaced = data.get("unplaced")
+    if isinstance(raw_unplaced, dict):
+      self.unplaced = {
+          "W": int(raw_unplaced.get("W", 7)),
+          "B": int(raw_unplaced.get("B", 7)),
+      }
+    else:
+      self.unplaced = {"W": 7, "B": 7}
+
     self.winner = data.get("winner", None)
-    w_line = data.get("winning_line", None)
-    self.winning_line = [str_to_point(p) for p in w_line] if w_line else None
+    if self.winner not in ("W", "B"):
+      self.winner = None
+
+    raw_w_line = data.get("winning_line")
+    if isinstance(raw_w_line, list):
+      parsed_line = [
+          str_to_point(p) for p in raw_w_line if str_to_point(p) is not None
+      ]
+      self.winning_line = parsed_line if len(parsed_line) == 3 else None
+    else:
+      self.winning_line = None
 
   def check_win(self, player):
     for line in LINES_OF_THREE:
@@ -267,16 +301,13 @@ class TicTacToeOnline:
 def draw_board(game, my_role):
   SCREEN.fill(BG_COLOR)
 
-  # Títol a dalt de tot
   title = TITLE_FONT.render("Tres en ratlla Online", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
 
-  # Indicador del teu color a l'esquerra
   role_str = "BLANQUES" if my_role == "W" else "NEGRES"
   role_surface = FONT.render(f"Ets les: {role_str}", True, (0, 100, 200))
   SCREEN.blit(role_surface, (20, 60))
 
-  # Indicador de quin torn és a la dreta
   indicator_x = WIDTH - 45
   indicator_y = 70
   radius = 16
@@ -315,13 +346,14 @@ def draw_board(game, my_role):
         SCREEN, LINE_COLOR, POINT_POSITIONS[p1], POINT_POSITIONS[p2], 4
     )
 
-  if game.winning_line:
-    p1 = POINT_POSITIONS[game.winning_line[0]]
-    p3 = POINT_POSITIONS[game.winning_line[2]]
-    pygame.draw.line(SCREEN, WIN_LINE_COLOR, p1, p3, 10)
+  if game.winning_line and len(game.winning_line) == 3:
+    p1 = POINT_POSITIONS.get(game.winning_line[0])
+    p3 = POINT_POSITIONS.get(game.winning_line[2])
+    if p1 and p3:
+      pygame.draw.line(SCREEN, WIN_LINE_COLOR, p1, p3, 10)
 
   for point, pos in POINT_POSITIONS.items():
-    owner = game.board[point]
+    owner = game.board.get(point)
     pygame.draw.circle(SCREEN, LINE_COLOR, pos, 6)
 
     if point == game.selected_point:
@@ -335,12 +367,13 @@ def draw_board(game, my_role):
       pygame.draw.circle(SCREEN, BLACK_BORDER, pos, 18, 2)
 
   turn_str = "BLANQUES" if game.turn == "W" else "NEGRES"
+  unplaced_count = game.unplaced.get(game.turn, 0)
 
   if game.winner:
     status_text = f"¡¡GUANYEN LES {'BLANQUES' if game.winner == 'W' else 'NEGRES'}!!"
-  elif game.unplaced[game.turn] > 0:
+  elif unplaced_count > 0:
     status_text = (
-        f"Col·locació - Torn: {turn_str} (Restants: {game.unplaced[game.turn]})"
+        f"Col·locació - Torn: {turn_str} (Restants: {unplaced_count})"
     )
   else:
     status_text = f"Moviment - Torn: {turn_str} (Selecciona i mou a un espai adjacent)"
@@ -365,7 +398,8 @@ async def main():
   # DETECCIÓ DE ROL PER LA URL
   try:
     href = str(js.window.location.href)
-    my_role = "B" if "#black" in href else "W"
+    hash_val = str(js.window.location.hash)
+    my_role = "B" if ("#black" in href or "black" in hash_val) else "W"
   except Exception:
     my_role = "W"
 
@@ -374,7 +408,6 @@ async def main():
   while running:
     clock.tick(30)
 
-    # Rebre estat actualitzat de Firebase des de JS
     remote_state = check_firebase_state()
     if remote_state:
       game.from_dict(remote_state)
@@ -393,7 +426,7 @@ async def main():
             break
 
       elif event.type == pygame.KEYDOWN:
-        if event.key == pygame.K_r:  # Prem 'R' per reiniciar
+        if event.key == pygame.K_r:
           game = TicTacToeOnline()
           push_firebase_state(game.to_dict())
 
@@ -402,3 +435,8 @@ async def main():
     await asyncio.sleep(0)
 
   pygame.quit()
+  sys.exit()
+
+
+if __name__ == "__main__":
+  asyncio.run(main())
