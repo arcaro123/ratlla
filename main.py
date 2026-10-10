@@ -13,7 +13,7 @@ pygame.font.init()
 WIDTH, HEIGHT = 700, 750
 BOARD_SIZE = 550
 OFFSET_X = (WIDTH - BOARD_SIZE) // 2
-OFFSET_Y = 100
+OFFSET_Y = 110
 
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Tres en ratlla Online")
@@ -23,15 +23,16 @@ FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
 
-# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT PUR (SENSE BLOQUEJOS EN PYTHON)
+# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT AMB DESACTIVACIÓ DE MEMÒRIA CAU (?t=Timestamp)
 js.window.eval(f"""
 window.latestGameState = null;
 window.firebaseUrl = "{FIREBASE_URL}";
 
-// Poll automàtic cada 400ms en segon pla
+// Lectura contínua de Firebase desactivant la memòria cau
 setInterval(async () => {{
     try {{
-        let res = await fetch(window.firebaseUrl);
+        let cacheBusterUrl = window.firebaseUrl + "?t=" + Date.now();
+        let res = await fetch(cacheBusterUrl, {{ cache: 'no-store' }});
         if (res.ok) {{
             let text = await res.text();
             if (text && text !== "null") {{
@@ -39,10 +40,11 @@ setInterval(async () => {{
             }}
         }}
     }} catch(e) {{}}
-}}, 400);
+}}, 300);
 
-// Funció per enviar dades a Firebase
+// Enviament de moviments actualitzant també la memòria local immediatament
 window.sendGameState = function(jsonStr) {{
+    window.latestGameState = jsonStr;
     try {{
         fetch(window.firebaseUrl, {{
             method: 'PUT',
@@ -65,7 +67,7 @@ HIGHLIGHT_COLOR = (0, 220, 100)
 WIN_LINE_COLOR = (30, 200, 80)
 
 FONT = pygame.font.SysFont("arial", 20, bold=True)
-TITLE_FONT = pygame.font.SysFont("arial", 32, bold=True)
+TITLE_FONT = pygame.font.SysFont("arial", 30, bold=True)
 
 # Coordenades lògiques dels 24 punts
 POINTS_CONFIG = [
@@ -266,21 +268,24 @@ class TicTacToeOnline:
 def draw_board(game, my_role):
   SCREEN.fill(BG_COLOR)
 
+  # Títol centrat a dalt
   title = TITLE_FONT.render("Tres en ratlla Online", True, TEXT_COLOR)
-  SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 25))
+  SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
 
+  # Indicador del teu color (sense superposicions)
   role_str = "BLANQUES" if my_role == "W" else "NEGRES"
   role_surface = FONT.render(f"Ets les: {role_str}", True, (0, 100, 200))
-  SCREEN.blit(role_surface, (20, 25))
+  SCREEN.blit(role_surface, (20, 60))
 
+  # Indicador del torn actual a la dreta
   indicator_x = WIDTH - 45
-  indicator_y = 35
-  radius = 18
+  indicator_y = 70
+  radius = 16
 
   turn_label = FONT.render("Torn:", True, TEXT_COLOR)
   SCREEN.blit(
       turn_label,
-      (indicator_x - radius - turn_label.get_width() - 8, indicator_y - 12),
+      (indicator_x - radius - turn_label.get_width() - 8, indicator_y - 10),
   )
 
   if game.turn == "W":
@@ -294,6 +299,7 @@ def draw_board(game, my_role):
         SCREEN, BLACK_BORDER, (indicator_x, indicator_y), radius, 2
     )
 
+  # Dibuix del tauler (línies)
   for layer in range(3):
     margin = 50 + layer * 70
     size = BOARD_SIZE - 2 * margin
@@ -316,6 +322,7 @@ def draw_board(game, my_role):
     p3 = POINT_POSITIONS[game.winning_line[2]]
     pygame.draw.line(SCREEN, WIN_LINE_COLOR, p1, p3, 10)
 
+  # Dibuix dels punts i les fitxes
   for point, pos in POINT_POSITIONS.items():
     owner = game.board[point]
     pygame.draw.circle(SCREEN, LINE_COLOR, pos, 6)
@@ -370,7 +377,7 @@ async def main():
   while running:
     clock.tick(30)
 
-    # Llegir estat actualitzat des de JS
+    # Rebre moviments de Firebase des de JS
     remote_state = check_firebase_state()
     if remote_state:
       game.from_dict(remote_state)
@@ -389,7 +396,7 @@ async def main():
             break
 
       elif event.type == pygame.KEYDOWN:
-        if event.key == pygame.K_r:  # Reiniciar tauler
+        if event.key == pygame.K_r:  # Prem 'R' per reiniciar
           game = TicTacToeOnline()
           push_firebase_state(game.to_dict())
 
