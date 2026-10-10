@@ -18,7 +18,7 @@ OFFSET_Y = 100
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Tres en ratlla Online")
 
-# LA TEVA URL DE FIREBASE CONFIGURADA:
+# URL DE FIREBASE
 FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
@@ -133,23 +133,27 @@ LINES_OF_THREE = [
 ]
 
 
+# PETICIONS HTTP SEGURES PER A PYGBAG / PYODIDE
 async def firebase_get():
   try:
     res = await js.fetch(FIREBASE_URL)
     text = await res.text()
-    return json.loads(text) if text and text != "null" else None
-  except Exception:
-    return None
+    if text and text != "null":
+      return json.loads(text)
+  except Exception as e:
+    print("Error llegint de Firebase:", e)
+  return None
 
 
 async def firebase_put(data):
   try:
-    options = js.Object()
-    options.method = "PUT"
-    options.headers = js.Object()
-    options.headers["Content-Type"] = "application/json"
-    options.body = json.dumps(data)
-    await js.fetch(FIREBASE_URL, options)
+    body_str = json.dumps(data)
+    # Avaluació segura en JS per crear les opcions del PUT
+    opts = js.eval(
+        f"({{method: 'PUT', headers: {{'Content-Type':"
+        f" 'application/json'}}, body: {json.dumps(body_str)}}})"
+    )
+    await js.fetch(FIREBASE_URL, opts)
   except Exception as e:
     print("Error escrivint a Firebase:", e)
 
@@ -334,10 +338,19 @@ async def main():
   clock = pygame.time.Clock()
   game = TicTacToeOnline()
 
-  # ASSIGNACIÓ DE ROL PER LA URL
-  href = str(js.window.location.href)
-  my_role = "B" if "#black" in href else "W"
+  # DETECCIÓ SEGURA DE ROL PER LA URL
+  try:
+    href = str(js.window.location.href)
+    my_role = "B" if "#black" in href else "W"
+  except Exception:
+    my_role = "W"
 
+  # DIBUIXAR PRIMER FOTOGRAMA IMMEDIATAMENT PER EVITAR PANTALLA NEGRA
+  draw_board(game, my_role)
+  pygame.display.flip()
+  await asyncio.sleep(0)
+
+  # CARREGAR ESTAT INICIAL EN SEGON PLA
   initial_state = await firebase_get()
   if initial_state:
     game.from_dict(initial_state)
@@ -349,7 +362,7 @@ async def main():
     clock.tick(30)
     poll_counter += 1
 
-    # Comprovar Firebase cada ~0.5 segons
+    # CONSULTAR FIREBASE CADA ~0.5 SEGONS
     if poll_counter % 15 == 0:
       remote_state = await firebase_get()
       if remote_state:
