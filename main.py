@@ -191,6 +191,7 @@ class TicTacToeOnline:
     self.selected_point = None
     self.winner = None
     self.winning_line = None
+    self.move_count = 0  # Comptador de versió per evitar race conditions
 
   def to_dict(self):
     return {
@@ -207,13 +208,21 @@ class TicTacToeOnline:
             if self.winning_line
             else None
         ),
+        "move_count": self.move_count,
     }
 
   def from_dict(self, data):
     if not data or not isinstance(data, dict):
       return
 
-    # Reiniciar sempre les 24 posicions per evitar KeyError
+    remote_count = int(data.get("move_count", 0))
+
+    # Només actualitza si la dades rebuda és MÉS RECENT que la local
+    if remote_count <= self.move_count and self.move_count > 0:
+      return
+
+    self.move_count = remote_count
+
     new_board = {p: None for p in POINTS_CONFIG}
     raw_board = data.get("board")
     if isinstance(raw_board, dict):
@@ -294,6 +303,9 @@ class TicTacToeOnline:
             else:
               self.turn = opponent
             moved = True
+
+    if moved:
+      self.move_count += 1
 
     return moved
 
@@ -395,11 +407,22 @@ async def main():
   clock = pygame.time.Clock()
   game = TicTacToeOnline()
 
-  # DETECCIÓ DE ROL PER LA URL
+  # DETECCIÓ PROFUNDA DEL ROL DINS DE L'IFRAME
   try:
-    href = str(js.window.location.href)
-    hash_val = str(js.window.location.hash)
-    my_role = "B" if ("#black" in href or "black" in hash_val) else "W"
+    js_detect_role = """
+        (function() {
+            try {
+                var url = window.location.href + " " + window.location.hash;
+                if (window.top) url += " " + window.top.location.href + " " + window.top.location.hash;
+                if (window.parent) url += " " + window.parent.location.href + " " + window.parent.location.hash;
+                return url;
+            } catch(e) {
+                return window.location.href;
+            }
+        })()
+        """
+    full_url = str(js.window.eval(js_detect_role)).lower()
+    my_role = "B" if "black" in full_url else "W"
   except Exception:
     my_role = "W"
 
@@ -427,7 +450,9 @@ async def main():
 
       elif event.type == pygame.KEYDOWN:
         if event.key == pygame.K_r:
+          new_count = game.move_count + 1
           game = TicTacToeOnline()
+          game.move_count = new_count
           push_firebase_state(game.to_dict())
 
     draw_board(game, my_role)
