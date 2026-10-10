@@ -23,6 +23,36 @@ FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
 
+# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT PUR (SENSE BLOQUEJOS EN PYTHON)
+js.window.eval(f"""
+window.latestGameState = null;
+window.firebaseUrl = "{FIREBASE_URL}";
+
+// Poll automàtic cada 400ms en segon pla
+setInterval(async () => {{
+    try {{
+        let res = await fetch(window.firebaseUrl);
+        if (res.ok) {{
+            let text = await res.text();
+            if (text && text !== "null") {{
+                window.latestGameState = text;
+            }}
+        }}
+    }} catch(e) {{}}
+}}, 400);
+
+// Funció per enviar dades a Firebase
+window.sendGameState = function(jsonStr) {{
+    try {{
+        fetch(window.firebaseUrl, {{
+            method: 'PUT',
+            headers: {{'Content-Type': 'application/json'}},
+            body: jsonStr
+        }});
+    }} catch(e) {{}}
+}};
+""")
+
 # COLORS
 BG_COLOR = (240, 217, 181)
 LINE_COLOR = (75, 54, 33)
@@ -37,7 +67,7 @@ WIN_LINE_COLOR = (30, 200, 80)
 FONT = pygame.font.SysFont("arial", 20, bold=True)
 TITLE_FONT = pygame.font.SysFont("arial", 32, bold=True)
 
-# Coordenades lògiques dels 24 punts del tauler
+# Coordenades lògiques dels 24 punts
 POINTS_CONFIG = [
     (0, 0, 0),
     (0, 0, 1),
@@ -133,31 +163,21 @@ LINES_OF_THREE = [
 ]
 
 
-# CONNEXIÓ SEGURA NATIVA AMB FIREBASE
-async def firebase_get():
+def check_firebase_state():
   try:
-    res = await js.window.fetch(FIREBASE_URL)
-    text = await res.text()
-    if text and str(text) != "null":
-      return json.loads(str(text))
-  except Exception as e:
-    print("Error llegint de Firebase:", e)
+    raw = js.window.latestGameState
+    if raw and str(raw) != "null":
+      return json.loads(str(raw))
+  except Exception:
+    pass
   return None
 
 
-async def firebase_put(data):
+def push_firebase_state(data):
   try:
-    body_json_str = json.dumps(json.dumps(data))
-    js_code = f"""
-            fetch("{FIREBASE_URL}", {{
-                method: "PUT",
-                headers: {{"Content-Type": "application/json"}},
-                body: {body_json_str}
-            }});
-        """
-    js.window.eval(js_code)
-  except Exception as e:
-    print("Error escrivint a Firebase:", e)
+    js.window.sendGameState(json.dumps(data))
+  except Exception:
+    pass
 
 
 class TicTacToeOnline:
@@ -345,18 +365,15 @@ async def main():
   except Exception:
     my_role = "W"
 
-  poll_counter = 0
   running = True
 
   while running:
     clock.tick(30)
-    poll_counter += 1
 
-    # Consultar Firebase cada ~0.5 segons
-    if poll_counter % 15 == 0:
-      remote_state = await firebase_get()
-      if remote_state:
-        game.from_dict(remote_state)
+    # Llegir estat actualitzat des de JS
+    remote_state = check_firebase_state()
+    if remote_state:
+      game.from_dict(remote_state)
 
     for event in pygame.event.get():
       if event.type == pygame.QUIT:
@@ -368,13 +385,13 @@ async def main():
           dist = math.hypot(mx - pos[0], my - pos[1])
           if dist <= 20:
             if game.handle_click(point, my_role):
-              await firebase_put(game.to_dict())
+              push_firebase_state(game.to_dict())
             break
 
       elif event.type == pygame.KEYDOWN:
-        if event.key == pygame.K_r:  # Prem 'R' per reiniciar
+        if event.key == pygame.K_r:  # Reiniciar tauler
           game = TicTacToeOnline()
-          await firebase_put(game.to_dict())
+          push_firebase_state(game.to_dict())
 
     draw_board(game, my_role)
     pygame.display.flip()
