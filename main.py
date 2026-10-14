@@ -18,6 +18,11 @@ except ImportError:
 pygame.init()
 pygame.font.init()
 
+# REGLA: quan a un jugador ja no li queden fitxes per col·locar, pot moure
+# QUALSEVOL de les seves fitxes a QUALSEVOL punt buit del tauler.
+# Posa-ho a False per tornar a la regla antiga (només a punts adjacents).
+FLY_WHEN_NO_PIECES_LEFT = True
+
 # CONFIGURACIÓ DE LA PANTALLA
 WIDTH, HEIGHT = 700, 750
 BOARD_SIZE = 550
@@ -186,6 +191,19 @@ LINES_OF_THREE = [
 ]
 
 
+def can_move_to(origin, target, board):
+  """Diu si una fitxa pot anar de 'origin' a 'target' (que ha d'estar buit).
+
+  Amb FLY_WHEN_NO_PIECES_LEFT activat, pot anar a qualsevol punt buit.
+  Si no, només als punts adjacents.
+  """
+  if board[target] is not None:
+    return False
+  if FLY_WHEN_NO_PIECES_LEFT:
+    return True
+  return target in ADJACENCY[origin]
+
+
 def check_firebase_state():
   if not HAS_JS:
     return None
@@ -334,7 +352,7 @@ class TicTacToeOnline:
           self.turn = opponent
         moved = True
 
-    # FASE 2: MOVIMENT DE FITXES
+    # FASE 2: MOVIMENT DE FITXES (quan s'acaben les fitxes, a qualsevol lloc)
     else:
       if self.selected_point is None:
         if self.board[point] == self.turn:
@@ -344,16 +362,15 @@ class TicTacToeOnline:
           self.selected_point = None
         elif self.board[point] == self.turn:
           self.selected_point = point
-        elif self.board[point] is None:
-          if point in ADJACENCY[self.selected_point]:
-            self.board[point] = self.turn
-            self.board[self.selected_point] = None
-            self.selected_point = None
-            if self.check_win(self.turn):
-              self.winner = self.turn
-            else:
-              self.turn = opponent
-            moved = True
+        elif can_move_to(self.selected_point, point, self.board):
+          self.board[point] = self.turn
+          self.board[self.selected_point] = None
+          self.selected_point = None
+          if self.check_win(self.turn):
+            self.winner = self.turn
+          else:
+            self.turn = opponent
+          moved = True
 
     if moved:
       self.move_count += 1
@@ -508,11 +525,13 @@ def draw_board(game, my_role, mode):
     if p1 and p3:
       pygame.draw.line(SCREEN, WIN_LINE_COLOR, p1, p3, 10)
 
-  # punts on es pot moure la fitxa seleccionada
+  # punts on es pot moure la fitxa seleccionada (tots els buits si pot volar)
   hints = []
   if game.selected_point is not None and not game.winner:
     hints = [
-        p for p in ADJACENCY[game.selected_point] if game.board[p] is None
+        p
+        for p in POINTS_CONFIG
+        if can_move_to(game.selected_point, p, game.board)
     ]
 
   for point, pos in POINT_POSITIONS.items():
@@ -537,6 +556,8 @@ def draw_board(game, my_role, mode):
     status_text = (
         f"Col·locació - Torn: {turn_str} (Restants: {unplaced_count})"
     )
+  elif FLY_WHEN_NO_PIECES_LEFT:
+    status_text = f"Moviment lliure - Torn: {turn_str} (mou una fitxa a qualsevol lloc buit)"
   else:
     status_text = f"Moviment - Torn: {turn_str} (Selecciona i mou a un espai adjacent)"
 
