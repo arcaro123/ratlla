@@ -2,8 +2,17 @@ import asyncio
 import json
 import math
 import sys
-import js
+
 import pygame
+
+# "js" només existeix al navegador (pygbag). A l'ordinador no, i el mode
+# local funciona igualment.
+try:
+  import js
+  HAS_JS = True
+except ImportError:
+  js = None
+  HAS_JS = False
 
 # Inicialització de Pygame
 pygame.init()
@@ -16,15 +25,22 @@ OFFSET_X = (WIDTH - BOARD_SIZE) // 2
 OFFSET_Y = 110
 
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Tres en ratlla Online")
+pygame.display.set_caption("Tres en ratlla")
 
-# LA TEVA URL DE FIREBASE
+# LA TEVA URL DE FIREBASE (només es fa servir en el mode online)
 FIREBASE_URL = (
     "https://arnau-2-default-rtdb.europe-west1.firebasedatabase.app/game.json"
 )
 
-# INJECTAR MOTOR DE FIREBASE EN JAVASCRIPT
-js.window.eval(f"""
+ONLINE_ENGINE = {"started": False}
+
+
+def start_online_engine():
+  """Injecta el motor de Firebase en JavaScript (només en mode online)."""
+  if ONLINE_ENGINE["started"] or not HAS_JS:
+    return
+
+  js.window.eval(f"""
 window.latestGameState = null;
 window.firebaseUrl = "{FIREBASE_URL}";
 
@@ -52,6 +68,9 @@ window.sendGameState = function(jsonStr) {{
 }};
 """)
 
+  ONLINE_ENGINE["started"] = True
+
+
 # COLORS
 BG_COLOR = (240, 217, 181)
 LINE_COLOR = (75, 54, 33)
@@ -62,9 +81,11 @@ BLACK_PIECE = (40, 40, 40)
 BLACK_BORDER = (0, 0, 0)
 HIGHLIGHT_COLOR = (0, 220, 100)
 WIN_LINE_COLOR = (30, 200, 80)
+HINT_COLOR = (0, 190, 90)
 
 FONT = pygame.font.SysFont("arial", 20, bold=True)
 TITLE_FONT = pygame.font.SysFont("arial", 28, bold=True)
+BIG_FONT = pygame.font.SysFont("arial", 44, bold=True)
 
 # Coordenades lògiques dels 24 punts
 POINTS_CONFIG = [
@@ -166,6 +187,8 @@ LINES_OF_THREE = [
 
 
 def check_firebase_state():
+  if not HAS_JS:
+    return None
   try:
     raw = js.window.latestGameState
     if raw and str(raw) != "null":
@@ -176,10 +199,36 @@ def check_firebase_state():
 
 
 def push_firebase_state(data):
+  if not HAS_JS:
+    return
   try:
     js.window.sendGameState(json.dumps(data))
   except Exception:
     pass
+
+
+def detect_online_role():
+  """Mira la URL (també la de la pàgina contenidora): si hi surt 'black', jugues amb negres."""
+  if not HAS_JS:
+    return "W"
+
+  try:
+    js_detect_role = """
+        (function() {
+            try {
+                var url = window.location.href + " " + window.location.hash;
+                if (window.top) url += " " + window.top.location.href + " " + window.top.location.hash;
+                if (window.parent) url += " " + window.parent.location.href + " " + window.parent.location.hash;
+                return url;
+            } catch(e) {
+                return window.location.href;
+            }
+        })()
+        """
+    full_url = str(js.window.eval(js_detect_role)).lower()
+    return "B" if "black" in full_url else "W"
+  except Exception:
+    return "W"
 
 
 class TicTacToeOnline:
@@ -258,6 +307,8 @@ class TicTacToeOnline:
     else:
       self.winning_line = None
 
+    self.selected_point = None
+
   def check_win(self, player):
     for line in LINES_OF_THREE:
       if all(self.board[p] == player for p in line):
@@ -310,14 +361,99 @@ class TicTacToeOnline:
     return moved
 
 
-def draw_board(game, my_role):
+# ---------------------------------------------------------------
+# MENÚ: LOCAL (mateixa pantalla) o ONLINE
+# ---------------------------------------------------------------
+
+
+def get_menu_buttons():
+  w, h = 460, 80
+  x = WIDTH // 2 - w // 2
+  return {
+      "local": pygame.Rect(x, 270, w, h),
+      "online": pygame.Rect(x, 390, w, h),
+  }
+
+
+def draw_menu(mouse_pos):
   SCREEN.fill(BG_COLOR)
 
-  title = TITLE_FONT.render("Tres en ratlla Online", True, TEXT_COLOR)
+  title = BIG_FONT.render("Tres en ratlla", True, TEXT_COLOR)
+  SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 120))
+
+  sub = FONT.render("Tria com vols jugar", True, (120, 100, 80))
+  SCREEN.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 190))
+
+  buttons = get_menu_buttons()
+
+  options = (
+      ("local", "1 - JUGAR EN LOCAL", "Dos jugadors a la mateixa pantalla", True),
+      (
+          "online",
+          "2 - JUGAR ONLINE",
+          "Cada jugador des del seu dispositiu"
+          if HAS_JS
+          else "Només disponible al navegador",
+          HAS_JS,
+      ),
+  )
+
+  for key, label, desc, enabled in options:
+    rect = buttons[key]
+    hover = enabled and rect.collidepoint(mouse_pos)
+
+    fill = (
+        (255, 240, 205) if hover else (250, 232, 195)
+    ) if enabled else (215, 200, 175)
+
+    pygame.draw.rect(SCREEN, fill, rect, border_radius=14)
+    pygame.draw.rect(
+        SCREEN,
+        HIGHLIGHT_COLOR if hover else LINE_COLOR,
+        rect,
+        5 if hover else 3,
+        border_radius=14,
+    )
+
+    color = TEXT_COLOR if enabled else (140, 130, 115)
+
+    t1 = TITLE_FONT.render(label, True, color)
+    SCREEN.blit(t1, (rect.centerx - t1.get_width() // 2, rect.y + 10))
+
+    t2 = FONT.render(desc, True, color)
+    SCREEN.blit(t2, (rect.centerx - t2.get_width() // 2, rect.y + 48))
+
+  hint = FONT.render(
+      "Clica una opció o prem 1 / 2", True, (120, 100, 80)
+  )
+  SCREEN.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 60))
+
+
+# ---------------------------------------------------------------
+# DIBUIX DEL TAULER
+# ---------------------------------------------------------------
+
+
+def draw_piece(owner, pos):
+  if owner == "W":
+    pygame.draw.circle(SCREEN, WHITE_PIECE, pos, 18)
+    pygame.draw.circle(SCREEN, WHITE_BORDER, pos, 18, 2)
+  elif owner == "B":
+    pygame.draw.circle(SCREEN, BLACK_PIECE, pos, 18)
+    pygame.draw.circle(SCREEN, BLACK_BORDER, pos, 18, 2)
+
+
+def draw_board(game, my_role, mode):
+  SCREEN.fill(BG_COLOR)
+
+  title = TITLE_FONT.render("Tres en ratlla", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
 
-  role_str = "BLANQUES" if my_role == "W" else "NEGRES"
-  role_surface = FONT.render(f"Ets les: {role_str}", True, (0, 100, 200))
+  if mode == "local":
+    role_surface = FONT.render("Mode local", True, (0, 100, 200))
+  else:
+    role_str = "BLANQUES" if my_role == "W" else "NEGRES"
+    role_surface = FONT.render(f"Ets les: {role_str}", True, (0, 100, 200))
   SCREEN.blit(role_surface, (20, 60))
 
   indicator_x = WIDTH - 45
@@ -340,6 +476,14 @@ def draw_board(game, my_role):
     pygame.draw.circle(
         SCREEN, BLACK_BORDER, (indicator_x, indicator_y), radius, 2
     )
+
+  # fitxes que queden per col·locar de cada jugador
+  counts = FONT.render(
+      f"Per col·locar:  Blanques {game.unplaced['W']}   Negres {game.unplaced['B']}",
+      True,
+      (120, 100, 80),
+  )
+  SCREEN.blit(counts, (WIDTH // 2 - counts.get_width() // 2, 92))
 
   for layer in range(3):
     margin = 50 + layer * 70
@@ -364,19 +508,25 @@ def draw_board(game, my_role):
     if p1 and p3:
       pygame.draw.line(SCREEN, WIN_LINE_COLOR, p1, p3, 10)
 
+  # punts on es pot moure la fitxa seleccionada
+  hints = []
+  if game.selected_point is not None and not game.winner:
+    hints = [
+        p for p in ADJACENCY[game.selected_point] if game.board[p] is None
+    ]
+
   for point, pos in POINT_POSITIONS.items():
     owner = game.board.get(point)
     pygame.draw.circle(SCREEN, LINE_COLOR, pos, 6)
 
+    if point in hints:
+      pygame.draw.circle(SCREEN, HINT_COLOR, pos, 11)
+      pygame.draw.circle(SCREEN, WHITE_PIECE, pos, 11, 2)
+
     if point == game.selected_point:
       pygame.draw.circle(SCREEN, HIGHLIGHT_COLOR, pos, 22, 4)
 
-    if owner == "W":
-      pygame.draw.circle(SCREEN, WHITE_PIECE, pos, 18)
-      pygame.draw.circle(SCREEN, WHITE_BORDER, pos, 18, 2)
-    elif owner == "B":
-      pygame.draw.circle(SCREEN, BLACK_PIECE, pos, 18)
-      pygame.draw.circle(SCREEN, BLACK_BORDER, pos, 18, 2)
+    draw_piece(owner, pos)
 
   turn_str = "BLANQUES" if game.turn == "W" else "NEGRES"
   unplaced_count = game.unplaced.get(game.turn, 0)
@@ -396,66 +546,108 @@ def draw_board(game, my_role):
   )
 
   restart_text = FONT.render(
-      "Prem 'R' per reiniciar la partida", True, (120, 100, 80)
+      "R = reiniciar la partida    M = menú", True, (120, 100, 80)
   )
   SCREEN.blit(
       restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT - 22)
   )
 
 
+def point_at(mouse_pos):
+  mx, my = mouse_pos
+  for point, pos in POINT_POSITIONS.items():
+    if math.hypot(mx - pos[0], my - pos[1]) <= 20:
+      return point
+  return None
+
+
 async def main():
   clock = pygame.time.Clock()
+
   game = TicTacToeOnline()
 
-  # DETECCIÓ PROFUNDA DEL ROL DINS DE L'IFRAME
-  try:
-    js_detect_role = """
-        (function() {
-            try {
-                var url = window.location.href + " " + window.location.hash;
-                if (window.top) url += " " + window.top.location.href + " " + window.top.location.hash;
-                if (window.parent) url += " " + window.parent.location.href + " " + window.parent.location.hash;
-                return url;
-            } catch(e) {
-                return window.location.href;
-            }
-        })()
-        """
-    full_url = str(js.window.eval(js_detect_role)).lower()
-    my_role = "B" if "black" in full_url else "W"
-  except Exception:
-    my_role = "W"
+  mode = "menu"          # "menu", "local" o "online"
+  my_role = "W"
 
   running = True
 
   while running:
     clock.tick(30)
 
-    remote_state = check_firebase_state()
-    if remote_state:
-      game.from_dict(remote_state)
+    # ----------------------------- MENÚ -----------------------------
+    if mode == "menu":
 
-    for event in pygame.event.get():
-      if event.type == pygame.QUIT:
-        running = False
+      draw_menu(pygame.mouse.get_pos())
 
-      elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-        mx, my = event.pos
-        for point, pos in POINT_POSITIONS.items():
-          dist = math.hypot(mx - pos[0], my - pos[1])
-          if dist <= 20:
-            if game.handle_click(point, my_role):
+      choice = None
+
+      for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+          running = False
+
+        elif event.type == pygame.KEYDOWN:
+          if event.key in (pygame.K_1, pygame.K_KP1, pygame.K_l):
+            choice = "local"
+          elif event.key in (pygame.K_2, pygame.K_KP2, pygame.K_o):
+            choice = "online"
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+          for key, rect in get_menu_buttons().items():
+            if rect.collidepoint(event.pos):
+              choice = key
+
+      if choice == "local":
+        game = TicTacToeOnline()
+        mode = "local"
+
+      elif choice == "online" and HAS_JS:
+        start_online_engine()
+        game = TicTacToeOnline()
+        my_role = detect_online_role()
+        mode = "online"
+
+    # ------------------------ PARTIDA (local/online) ------------------------
+    else:
+
+      if mode == "online":
+        remote_state = check_firebase_state()
+        if remote_state:
+          game.from_dict(remote_state)
+
+      for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+          running = False
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+          point = point_at(event.pos)
+
+          if point is not None:
+
+            if mode == "local":
+              # a la mateixa pantalla juga sempre qui té el torn
+              game.handle_click(point, game.turn)
+
+            elif game.handle_click(point, my_role):
               push_firebase_state(game.to_dict())
-            break
 
-      elif event.type == pygame.KEYDOWN:
-        if event.key == pygame.K_r:
-          new_count = game.move_count + 1
-          game = TicTacToeOnline()
-          game.move_count = new_count
-          push_firebase_state(game.to_dict())
+        elif event.type == pygame.KEYDOWN:
 
-    draw_board(game, my_role)
+          if event.key == pygame.K_r:
+            if mode == "local":
+              game = TicTacToeOnline()
+            else:
+              new_count = game.move_count + 1
+              game = TicTacToeOnline()
+              game.move_count = new_count
+              push_firebase_state(game.to_dict())
+
+          elif event.key == pygame.K_m:
+            game = TicTacToeOnline()
+            mode = "menu"
+
+      if mode != "menu":
+        draw_board(game, my_role, mode)
+
     pygame.display.flip()
     await asyncio.sleep(0)
 
