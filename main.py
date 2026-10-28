@@ -1,12 +1,14 @@
 import asyncio
 import json
 import math
+import random
 import sys
+import time
 
 import pygame
 
 # "js" només existeix al navegador (pygbag). A l'ordinador no, i el mode
-# local funciona igualment.
+# local i el mode contra l'ordinador funcionen igualment.
 try:
   import js
   HAS_JS = True
@@ -22,6 +24,10 @@ pygame.font.init()
 # QUALSEVOL de les seves fitxes a QUALSEVOL punt buit del tauler.
 # Posa-ho a False per tornar a la regla antiga (només a punts adjacents).
 FLY_WHEN_NO_PIECES_LEFT = True
+
+# Taules: si la mateixa posició (amb el mateix torn) es repeteix aquest
+# nombre de cops, la partida s'acaba en empat (només local i contra el bot).
+REPETITIONS_FOR_DRAW = 3
 
 # CONFIGURACIÓ DE LA PANTALLA
 WIDTH, HEIGHT = 700, 750
@@ -251,7 +257,7 @@ def detect_online_role():
 
 class TicTacToeOnline:
 
-  def __init__(self):
+  def __init__(self, track_draws=False):
     self.board = {p: None for p in POINTS_CONFIG}
     self.turn = "W"
     self.unplaced = {"W": 7, "B": 7}
@@ -259,6 +265,10 @@ class TicTacToeOnline:
     self.winner = None
     self.winning_line = None
     self.move_count = 0  # Comptador de versió per evitar race conditions
+    # taules (només local / bot, no es sincronitza online)
+    self.track_draws = track_draws
+    self.draw = False
+    self.history = {}
 
   def to_dict(self):
     return {
@@ -334,8 +344,22 @@ class TicTacToeOnline:
         return True
     return False
 
+  def register_position(self):
+    """Compta les repeticions de posició i declara taules si cal."""
+    if not self.track_draws or self.winner:
+      return
+    key = (
+        tuple(self.board[p] for p in POINTS_CONFIG),
+        self.turn,
+        self.unplaced["W"],
+        self.unplaced["B"],
+    )
+    self.history[key] = self.history.get(key, 0) + 1
+    if self.history[key] >= REPETITIONS_FOR_DRAW:
+      self.draw = True
+
   def handle_click(self, point, my_role):
-    if self.winner or self.turn != my_role:
+    if self.winner or self.draw or self.turn != my_role:
       return False
 
     opponent = "B" if self.turn == "W" else "W"
@@ -374,49 +398,259 @@ class TicTacToeOnline:
 
     if moved:
       self.move_count += 1
+      self.register_position()
 
     return moved
 
 
 # ---------------------------------------------------------------
-# MENÚ: LOCAL (mateixa pantalla) o ONLINE
+# BOT (minimax + alfa-beta + aprofundiment iteratiu)
+# ---------------------------------------------------------------
+
+IDX = {p: i for i, p in enumerate(POINTS_CONFIG)}
+LINES_IDX = [tuple(IDX[p] for p in l) for l in LINES_OF_THREE]
+LINES_OF_POINT = [[l for l in LINES_IDX if i in l] for i in range(24)]
+ADJ_IDX = [[IDX[q] for q in ADJACENCY[p]] for p in POINTS_CONFIG]
+
+WIN = 10000
+INF = 10 ** 9
+
+
+class Timeout(Exception):
+  pass
+
+
+class Bot:
+  """1 = blanques, 2 = negres.
+
+  think: segons màxims de reflexió. max_depth: profunditat màxima.
+  blunder: probabilitat de fer una jugada a l'atzar (per als nivells fàcils).
+  """
+
+  def __init__(self, think=0.8, max_depth=12, blunder=0.0):
+    self.think = think
+    self.max_depth = max_depth
+    self.blunder = blunder
+    self.b = [0] * 24
+    self.unp = {1: 7, 2: 7}
+    self.deadline = 0
+    self.nodes = 0
+
+  # ---------- regles ----------
+  def reachable(self, pl, e, line):
+    if self.unp[pl] > 0 or FLY_WHEN_NO_PIECES_LEFT:
+      return True
+    return any(self.b[n] == pl and n not in line for n in ADJ_IDX[e])
+
+  def win_points(self, pl):
+    """Punts buits on 'pl' completaria una línia el proper torn."""
+    pts = set()
+    b = self.b
+    for line in LINES_IDX:
+      cnt, empty = 0, None
+      for i in line:
+        if b[i] == pl:
+          cnt += 1
+        elif b[i] == 0:
+          empty = i
+      if cnt == 2 and empty is not None and self.reachable(pl, empty, line):
+        pts.add(empty)
+    return pts
+
+  def moves(self, pl, only=None):
+    b = self.b
+    empt = [i for i in range(24) if b[i] == 0 and (only is None or i == only)]
+    if self.unp[pl] > 0:
+      return [(None, d) for d in empt]
+    res = []
+    for s in range(24):
+      if b[s] == pl:
+        if FLY_WHEN_NO_PIECES_LEFT:
+          res.extend((s, d) for d in empt)
+        else:
+          res.extend((s, d) for d in ADJ_IDX[s]
+                     if b[d] == 0 and (only is None or d == only))
+    return res
+
+  def apply(self, pl, m):
+    s, d = m
+    if s is None:
+      self.unp[pl] -= 1
+    else:
+      self.b[s] = 0
+    self.b[d] = pl
+    return any(all(self.b[i] == pl for i in l) for l in LINES_OF_POINT[d])
+
+  def undo(self, pl, m):
+    s, d = m
+    self.b[d] = 0
+    if s is None:
+      self.unp[pl] += 1
+    else:
+      self.b[s] = pl
+
+  # ---------- heurística ----------
+  def order(self, pl, m):
+    s_, d = m
+    sc = 0
+    for l in LINES_OF_POINT[d]:
+      a = o = 0
+      for i in l:
+        if i == s_:
+          continue
+        v = self.b[i]
+        if v == pl:
+          a += 1
+        elif v:
+          o += 1
+      if o == 0:
+        sc += (1, 4, 0)[a]
+      elif a == 0:
+        sc += (0, 2, 3)[o]
+    return sc
+
+  def evaluate(self, pl):
+    s = 0
+    b = self.b
+    for l in LINES_IDX:
+      a = o = 0
+      for i in l:
+        v = b[i]
+        if v == pl:
+          a += 1
+        elif v:
+          o += 1
+      if o == 0:
+        s += (0, 2, 6, 0)[a]
+      elif a == 0:
+        s -= (0, 2, 6, 0)[o]
+    return s
+
+  # ---------- cerca ----------
+  def nega(self, pl, depth, alpha, beta, ply):
+    self.nodes += 1
+    if self.nodes & 255 == 0 and time.time() > self.deadline:
+      raise Timeout
+    opp = 3 - pl
+    if self.win_points(pl):
+      return WIN - ply
+    threats = self.win_points(opp)
+    if len(threats) >= 2:
+      return -(WIN - ply - 1)
+    if depth == 0:
+      return self.evaluate(pl)
+    only = next(iter(threats)) if threats else None
+    mv = self.moves(pl, only)
+    if not mv:
+      return -(WIN - ply - 1)
+    mv.sort(key=lambda m: -self.order(pl, m))
+    best = -INF
+    for m in mv:
+      self.apply(pl, m)
+      sc = -self.nega(opp, depth - 1, -beta, -alpha, ply + 1)
+      self.undo(pl, m)
+      if sc > best:
+        best = sc
+        if sc > alpha:
+          alpha = sc
+          if alpha >= beta:
+            break
+    return best
+
+  def choose(self, game, role):
+    """Retorna (origen|None, destí) en índexs, o None si no pot moure."""
+    pl = 1 if role == "W" else 2
+    opp = 3 - pl
+    self.b = [0] * 24
+    for p, v in game.board.items():
+      if v:
+        self.b[IDX[p]] = 1 if v == "W" else 2
+    self.unp = {1: game.unplaced["W"], 2: game.unplaced["B"]}
+
+    mv = self.moves(pl)
+    if not mv:
+      return None
+    random.shuffle(mv)                       # varietat entre jugades iguals
+    for m in mv:                             # victòria immediata
+      won = self.apply(pl, m)
+      self.undo(pl, m)
+      if won:
+        return m
+    if self.blunder and random.random() < self.blunder:
+      return random.choice(mv)               # nivells fàcils: despistades
+    threats = self.win_points(opp)
+    if len(threats) == 1:                    # bloqueig obligat
+      forced = [m for m in mv if m[1] in threats]
+      if forced:
+        mv = forced
+    if len(mv) == 1:
+      return mv[0]
+    mv.sort(key=lambda m: -self.order(pl, m))
+
+    best = mv[0]
+    snap = (self.b[:], dict(self.unp))
+    self.deadline = time.time() + self.think
+    self.nodes = 0
+    for depth in range(1, self.max_depth + 1):
+      try:
+        cur, cur_sc, alpha = None, -INF, -INF
+        for m in mv:
+          self.apply(pl, m)
+          sc = -self.nega(opp, depth - 1, -INF, -alpha, 1)
+          self.undo(pl, m)
+          if sc > cur_sc:
+            cur_sc, cur = sc, m
+            alpha = max(alpha, sc)
+        best = cur
+        mv.remove(cur)
+        mv.insert(0, cur)                    # el millor primer a la següent profunditat
+        if abs(cur_sc) >= WIN - 100:         # victòria/derrota forçada trobada
+          break
+      except Timeout:
+        self.b, self.unp = snap
+        break
+    return best
+
+  def play(self, game, role):
+    m = self.choose(game, role)
+    if m is None:
+      return
+    s, d = m
+    if s is not None:
+      game.handle_click(POINTS_CONFIG[s], role)   # selecciona la fitxa
+    game.handle_click(POINTS_CONFIG[d], role)     # i la mou / col·loca
+
+
+# nom, descripció, paràmetres del bot
+DIFFICULTIES = {
+    "easy": ("FÀCIL", "Es despista sovint", dict(think=0.05, max_depth=1, blunder=0.4)),
+    "medium": ("MITJÀ", "Veu unes quantes jugades", dict(think=0.2, max_depth=3, blunder=0.1)),
+    "hard": ("DIFÍCIL", "Molt difícil de guanyar", dict(think=0.5 if HAS_JS else 0.8, max_depth=12)),
+}
+
+
+# ---------------------------------------------------------------
+# MENÚS
 # ---------------------------------------------------------------
 
 
-def get_menu_buttons():
+def get_buttons(n):
   w, h = 460, 80
   x = WIDTH // 2 - w // 2
-  return {
-      "local": pygame.Rect(x, 270, w, h),
-      "online": pygame.Rect(x, 390, w, h),
-  }
+  return [pygame.Rect(x, 240 + i * 110, w, h) for i in range(n)]
 
 
-def draw_menu(mouse_pos):
+def draw_choice_menu(title, subtitle, options, mouse_pos, hint):
+  """options: llista de (clau, text, descripció, activat)."""
   SCREEN.fill(BG_COLOR)
 
-  title = BIG_FONT.render("Tres en ratlla", True, TEXT_COLOR)
-  SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 120))
+  t = BIG_FONT.render(title, True, TEXT_COLOR)
+  SCREEN.blit(t, (WIDTH // 2 - t.get_width() // 2, 120))
 
-  sub = FONT.render("Tria com vols jugar", True, (120, 100, 80))
+  sub = FONT.render(subtitle, True, (120, 100, 80))
   SCREEN.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 190))
 
-  buttons = get_menu_buttons()
-
-  options = (
-      ("local", "1 - JUGAR EN LOCAL", "Dos jugadors a la mateixa pantalla", True),
-      (
-          "online",
-          "2 - JUGAR ONLINE",
-          "Cada jugador des del seu dispositiu"
-          if HAS_JS
-          else "Només disponible al navegador",
-          HAS_JS,
-      ),
-  )
-
-  for key, label, desc, enabled in options:
-    rect = buttons[key]
+  for rect, (key, label, desc, enabled) in zip(get_buttons(len(options)), options):
     hover = enabled and rect.collidepoint(mouse_pos)
 
     fill = (
@@ -440,10 +674,30 @@ def draw_menu(mouse_pos):
     t2 = FONT.render(desc, True, color)
     SCREEN.blit(t2, (rect.centerx - t2.get_width() // 2, rect.y + 48))
 
-  hint = FONT.render(
-      "Clica una opció o prem 1 / 2", True, (120, 100, 80)
-  )
-  SCREEN.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 60))
+  h = FONT.render(hint, True, (120, 100, 80))
+  SCREEN.blit(h, (WIDTH // 2 - h.get_width() // 2, HEIGHT - 60))
+
+
+def main_menu_options():
+  return [
+      ("local", "1 - JUGAR EN LOCAL", "Dos jugadors a la mateixa pantalla", True),
+      ("bot", "2 - CONTRA L'ORDINADOR", "Tu portes les blanques", True),
+      (
+          "online",
+          "3 - JUGAR ONLINE",
+          "Cada jugador des del seu dispositiu"
+          if HAS_JS
+          else "Només disponible al navegador",
+          HAS_JS,
+      ),
+  ]
+
+
+def difficulty_options():
+  return [
+      (k, f"{i + 1} - {v[0]}", v[1], True)
+      for i, (k, v) in enumerate(DIFFICULTIES.items())
+  ]
 
 
 # ---------------------------------------------------------------
@@ -460,7 +714,7 @@ def draw_piece(owner, pos):
     pygame.draw.circle(SCREEN, BLACK_BORDER, pos, 18, 2)
 
 
-def draw_board(game, my_role, mode):
+def draw_board(game, my_role, mode, difficulty=None):
   SCREEN.fill(BG_COLOR)
 
   title = TITLE_FONT.render("Tres en ratlla", True, TEXT_COLOR)
@@ -468,6 +722,11 @@ def draw_board(game, my_role, mode):
 
   if mode == "local":
     role_surface = FONT.render("Mode local", True, (0, 100, 200))
+  elif mode == "bot":
+    name = DIFFICULTIES[difficulty][0].capitalize()
+    role_surface = FONT.render(
+        f"Tu: BLANQUES - Bot: NEGRES ({name})", True, (0, 100, 200)
+    )
   else:
     role_str = "BLANQUES" if my_role == "W" else "NEGRES"
     role_surface = FONT.render(f"Ets les: {role_str}", True, (0, 100, 200))
@@ -527,7 +786,7 @@ def draw_board(game, my_role, mode):
 
   # punts on es pot moure la fitxa seleccionada (tots els buits si pot volar)
   hints = []
-  if game.selected_point is not None and not game.winner:
+  if game.selected_point is not None and not game.winner and not game.draw:
     hints = [
         p
         for p in POINTS_CONFIG
@@ -550,8 +809,17 @@ def draw_board(game, my_role, mode):
   turn_str = "BLANQUES" if game.turn == "W" else "NEGRES"
   unplaced_count = game.unplaced.get(game.turn, 0)
 
-  if game.winner:
-    status_text = f"¡¡GUANYEN LES {'BLANQUES' if game.winner == 'W' else 'NEGRES'}!!"
+  if mode == "bot" and game.turn == "B" and not game.winner and not game.draw:
+    status_text = "L'ordinador està pensant..."
+  elif game.winner:
+    if mode == "bot":
+      status_text = (
+          "Has guanyat!!" if game.winner == "W" else "Ha guanyat l'ordinador"
+      )
+    else:
+      status_text = f"¡¡GUANYEN LES {'BLANQUES' if game.winner == 'W' else 'NEGRES'}!!"
+  elif game.draw:
+    status_text = "TAULES (posició repetida)"
   elif unplaced_count > 0:
     status_text = (
         f"Col·locació - Torn: {turn_str} (Restants: {unplaced_count})"
@@ -587,18 +855,28 @@ async def main():
 
   game = TicTacToeOnline()
 
-  mode = "menu"          # "menu", "local" o "online"
+  mode = "menu"          # "menu", "diff", "local", "bot" o "online"
   my_role = "W"
+  difficulty = "hard"
+  bot = Bot(**DIFFICULTIES[difficulty][2])
+  bot_due = None
 
   running = True
 
   while running:
     clock.tick(30)
 
-    # ----------------------------- MENÚ -----------------------------
+    # ----------------------------- MENÚ PRINCIPAL -----------------------------
     if mode == "menu":
 
-      draw_menu(pygame.mouse.get_pos())
+      opts = main_menu_options()
+      draw_choice_menu(
+          "Tres en ratlla",
+          "Tria com vols jugar",
+          opts,
+          pygame.mouse.get_pos(),
+          "Clica una opció o prem 1 / 2 / 3",
+      )
 
       choice = None
 
@@ -609,17 +887,22 @@ async def main():
         elif event.type == pygame.KEYDOWN:
           if event.key in (pygame.K_1, pygame.K_KP1, pygame.K_l):
             choice = "local"
-          elif event.key in (pygame.K_2, pygame.K_KP2, pygame.K_o):
+          elif event.key in (pygame.K_2, pygame.K_KP2, pygame.K_b):
+            choice = "bot"
+          elif event.key in (pygame.K_3, pygame.K_KP3, pygame.K_o):
             choice = "online"
 
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-          for key, rect in get_menu_buttons().items():
+          for rect, o in zip(get_buttons(len(opts)), opts):
             if rect.collidepoint(event.pos):
-              choice = key
+              choice = o[0]
 
       if choice == "local":
-        game = TicTacToeOnline()
+        game = TicTacToeOnline(track_draws=True)
         mode = "local"
+
+      elif choice == "bot":
+        mode = "diff"
 
       elif choice == "online" and HAS_JS:
         start_online_engine()
@@ -627,7 +910,50 @@ async def main():
         my_role = detect_online_role()
         mode = "online"
 
-    # ------------------------ PARTIDA (local/online) ------------------------
+    # ----------------------------- DIFICULTAT -----------------------------
+    elif mode == "diff":
+
+      opts = difficulty_options()
+      draw_choice_menu(
+          "Dificultat",
+          "Tu portes les blanques i comences",
+          opts,
+          pygame.mouse.get_pos(),
+          "Clica una opció o prem 1 / 2 / 3   -   M = enrere",
+      )
+
+      picked = None
+      keys = (
+          (pygame.K_1, pygame.K_KP1),
+          (pygame.K_2, pygame.K_KP2),
+          (pygame.K_3, pygame.K_KP3),
+      )
+
+      for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+          running = False
+
+        elif event.type == pygame.KEYDOWN:
+          if event.key in (pygame.K_m, pygame.K_ESCAPE):
+            mode = "menu"
+          else:
+            for o, ks in zip(opts, keys):
+              if event.key in ks:
+                picked = o[0]
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+          for rect, o in zip(get_buttons(len(opts)), opts):
+            if rect.collidepoint(event.pos):
+              picked = o[0]
+
+      if picked:
+        difficulty = picked
+        bot = Bot(**DIFFICULTIES[difficulty][2])
+        game = TicTacToeOnline(track_draws=True)
+        bot_due = None
+        mode = "bot"
+
+    # ------------------------ PARTIDA (local/bot/online) ------------------------
     else:
 
       if mode == "online":
@@ -648,14 +974,19 @@ async def main():
               # a la mateixa pantalla juga sempre qui té el torn
               game.handle_click(point, game.turn)
 
+            elif mode == "bot":
+              if game.turn == "W":
+                game.handle_click(point, "W")
+
             elif game.handle_click(point, my_role):
               push_firebase_state(game.to_dict())
 
         elif event.type == pygame.KEYDOWN:
 
           if event.key == pygame.K_r:
-            if mode == "local":
-              game = TicTacToeOnline()
+            if mode in ("local", "bot"):
+              game = TicTacToeOnline(track_draws=True)
+              bot_due = None
             else:
               new_count = game.move_count + 1
               game = TicTacToeOnline()
@@ -664,12 +995,24 @@ async def main():
 
           elif event.key == pygame.K_m:
             game = TicTacToeOnline()
+            bot_due = None
             mode = "menu"
 
       if mode != "menu":
-        draw_board(game, my_role, mode)
+        draw_board(game, my_role, mode, difficulty)
 
     pygame.display.flip()
+
+    # Torn del bot: després del flip, perquè el missatge "pensant..."
+    # ja s'hagi dibuixat abans que la cerca bloquegi un moment.
+    if mode == "bot" and game.turn == "B" and not game.winner and not game.draw:
+      now = pygame.time.get_ticks()
+      if bot_due is None:
+        bot_due = now + 300
+      elif now >= bot_due:
+        bot.play(game, "B")
+        bot_due = None
+
     await asyncio.sleep(0)
 
   pygame.quit()
