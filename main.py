@@ -1284,15 +1284,51 @@ def status_text(app):
   return f"Moviment - Torn: {who} (a un espai adjacent)"
 
 
+def draw_button(rect, label, enabled=True, mouse=None):
+  mouse = mouse or pygame.mouse.get_pos()
+  hover = enabled and rect.collidepoint(mouse)
+  if enabled:
+    fill = (255, 240, 205) if hover else (245, 226, 185)
+    border = HIGHLIGHT_COLOR if hover else LINE_COLOR
+    color = TEXT_COLOR
+  else:
+    fill, border, color = (222, 208, 182), (170, 155, 130), (160, 148, 128)
+  pygame.draw.rect(SCREEN, fill, rect, border_radius=10)
+  pygame.draw.rect(SCREEN, border, rect, 3, border_radius=10)
+  t = FONT.render(label, True, color)
+  SCREEN.blit(t, (rect.centerx - t.get_width() // 2,
+                  rect.centery - t.get_height() // 2))
+
+
+def game_buttons(app):
+  """Botons de la partida (per jugar des del mòbil): (rect, clau, activat)."""
+  y, h = HEIGHT - 48, 40
+  if app.mode == "online":
+    items = [("restart", "Reiniciar", True), ("menu", "Menú", True)]
+  else:
+    items = [
+        ("restart", "Reiniciar", True),
+        ("menu", "Menú", True),
+        ("undo", "Desfer", app.can_undo()),
+        ("hint", "Pista", app.can_hint()),
+    ]
+  gap = 10
+  w = (WIDTH - 2 * 30 - gap * (len(items) - 1)) // len(items)
+  return [(pygame.Rect(30 + i * (w + gap), y, w, h), key, en)
+          for i, (key, _label, en) in enumerate(items)], [i[1] for i in items]
+
+
 def draw_footer(app):
   info = FONT.render(status_text(app), True, TEXT_COLOR)
-  SCREEN.blit(info, (WIDTH // 2 - info.get_width() // 2, HEIGHT - 45))
-  if app.mode == "online":
-    txt = "R = reiniciar    M = menú"
-  else:
-    txt = "R = reiniciar    M = menú    Z = desfer    H = pista"
-  t = FONT.render(txt, True, SOFT_TEXT)
-  SCREEN.blit(t, (WIDTH // 2 - t.get_width() // 2, HEIGHT - 22))
+  SCREEN.blit(info, (WIDTH // 2 - info.get_width() // 2, HEIGHT - 82))
+  rects, labels = game_buttons(app)
+  names = {"restart": "Reiniciar", "menu": "Menú", "undo": "Desfer", "hint": "Pista"}
+  for (rect, key, en) in rects:
+    draw_button(rect, names[key], en)
+
+
+def back_button_rect():
+  return pygame.Rect(15, 15, 120, 42)
 
 
 # ---------------------------------------------------------------
@@ -1658,6 +1694,11 @@ class App:
   def process_menu(self, events):
     title, sub, opts, hint = self.menu_def()
     pick = menu_pick(opts, events)
+    if pick is None and self.state in ("modes", "diff", "side"):
+      for ev in events:
+        if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1
+            and back_button_rect().collidepoint(ev.pos)):
+          pick = "back"
     if pick is None:
       return
     s = self.state
@@ -1812,6 +1853,30 @@ class App:
     write_save()
 
   # ---------- ajudes ----------
+  def can_undo(self):
+    g = self.game
+    if self.mode == "online" or g.winner or g.draw or self.result:
+      return False
+    if self.mode == "local":
+      return bool(g.stack)
+    return any(s["turn"] == self.me for s in g.stack)
+
+  def can_hint(self):
+    g = self.game
+    if self.mode == "online" or g.winner or g.draw or self.result:
+      return False
+    return self.mode != "bot" or g.turn == self.me
+
+  def press(self, key):
+    if key == "restart":
+      self.restart()
+    elif key == "menu":
+      self.leave()
+    elif key == "undo":
+      self.do_undo()
+    elif key == "hint":
+      self.do_hint()
+
   def do_undo(self):
     g = self.game
     if self.mode == "online" or g.winner or g.draw or self.result:
@@ -1891,6 +1956,18 @@ class App:
             self.restart()
           elif menu.collidepoint(ev.pos):
             self.leave()
+            return
+          continue
+        rects, _ = game_buttons(self)
+        pressed = False
+        for rect, key, en in rects:
+          if rect.collidepoint(ev.pos):
+            pressed = True
+            if en:
+              self.press(key)
+            break
+        if pressed:
+          if self.state != "play":
             return
           continue
         g = self.game
@@ -1986,6 +2063,8 @@ class App:
     else:
       title, sub, opts, hint = self.menu_def()
       draw_choice_menu(title, sub, opts, pygame.mouse.get_pos(), hint)
+      if self.state in ("modes", "diff", "side"):
+        draw_button(back_button_rect(), "< Enrere")
 
 
 async def main():
