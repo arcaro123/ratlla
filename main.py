@@ -37,14 +37,24 @@ DRAW_SCORE = -12
 
 # Punts per guanyar a cada dificultat (una taula en dóna una cinquena part).
 # Si has usat desfer o pista, només en cobres la meitat.
-POINTS = {"easy": 10, "medium": 30, "hard": 100}
+POINTS = {"easy": 10, "medium": 30, "hard": 100, "impossible": 300}
 
-LEVELS = ("easy", "medium", "hard")
+# Punts totals necessaris per poder jugar el nivell IMPOSSIBLE.
+UNLOCK_POINTS = 2000
+
+LEVELS = ("easy", "medium", "hard", "impossible")
 LEVEL_INFO = {
     "easy": ("FÀCIL", "Es despista sovint"),
     "medium": ("MITJÀ", "Veu unes quantes jugades"),
     "hard": ("DIFÍCIL", "Molt difícil de guanyar"),
+    "impossible": ("IMPOSSIBLE", "No falla mai"),
 }
+
+
+def is_locked(level):
+  """El nivell impossible està bloquejat fins a tenir UNLOCK_POINTS punts."""
+  return level == "impossible" and SAVE["points"] < UNLOCK_POINTS
+
 
 WIDTH, HEIGHT = 700, 750
 BOARD_SIZE = 550
@@ -116,6 +126,11 @@ COLOR_WIN = (30, 150, 70)
 COLOR_LOSE = (190, 50, 50)
 COLOR_DRAW = (190, 130, 20)
 
+# cadenes del nivell bloquejat
+CHAIN_DARK = (70, 72, 78)
+CHAIN_LIGHT = (175, 178, 186)
+LOCK_GOLD = (230, 180, 40)
+
 BOARD_BLUE = (30, 80, 170)
 BOARD_DARK = (18, 50, 120)
 C4_COLORS = {
@@ -174,6 +189,9 @@ def load_save():
             data["records"][g][k] = [int(x) for x in rec]
   except Exception:
     pass
+  # si el nivell desat és l'impossible però encara està bloquejat, torna al difícil
+  if data["difficulty"] == "impossible" and data["points"] < UNLOCK_POINTS:
+    data["difficulty"] = "hard"
   return data
 
 
@@ -1097,13 +1115,18 @@ BOT_PARAMS = {
         "easy": dict(think=0.05, max_depth=1, blunder=0.4),
         "medium": dict(think=0.2, max_depth=3, blunder=0.1),
         "hard": dict(think=0.5 if HAS_JS else 0.8, max_depth=12),
+        "impossible": dict(think=1.5 if HAS_JS else 3.0, max_depth=40),
     },
     "c4": {
         "easy": dict(think=0.05, max_depth=2, blunder=0.35),
         "medium": dict(think=0.2, max_depth=4, blunder=0.08),
         "hard": dict(think=0.5 if HAS_JS else 0.8, max_depth=14),
+        "impossible": dict(think=1.5 if HAS_JS else 3.0, max_depth=42),
     },
 }
+
+# La pista fa servir sempre el bot més fort, així és la millor jugada possible
+HINT_PARAMS = {k: BOT_PARAMS[k]["impossible"] for k in BOT_PARAMS}
 
 
 # ---------------------------------------------------------------
@@ -1171,8 +1194,66 @@ def get_buttons(n):
   return [pygame.Rect(x, 235 + i * step, w, h) for i in range(n)]
 
 
+# ---------- cadenes i cadenat (nivell bloquejat) ----------
+
+_LINK_CACHE = {}
+
+
+def chain_link(kind, angle):
+  """Una baula de cadena girada 'angle' graus (alternant planes i de cantó)."""
+  key = (kind, round(angle))
+  if key not in _LINK_CACHE:
+    if kind == 0:
+      s = pygame.Surface((32, 18), pygame.SRCALPHA)
+      pygame.draw.ellipse(s, CHAIN_DARK, (0, 0, 32, 18), 5)
+      pygame.draw.ellipse(s, CHAIN_LIGHT, (2, 2, 28, 14), 2)
+    else:
+      s = pygame.Surface((18, 18), pygame.SRCALPHA)
+      pygame.draw.rect(s, CHAIN_DARK, (0, 5, 18, 8), border_radius=4)
+      pygame.draw.rect(s, CHAIN_LIGHT, (2, 7, 14, 3), border_radius=2)
+    _LINK_CACHE[key] = pygame.transform.rotate(s, -angle)
+  return _LINK_CACHE[key]
+
+
+def draw_chain(p1, p2):
+  dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+  dist = math.hypot(dx, dy)
+  if dist == 0:
+    return
+  angle = math.degrees(math.atan2(dy, dx))
+  step = 22
+  for i in range(int(dist // step) + 1):
+    t = i * step / dist
+    s = chain_link(i % 2, angle)
+    SCREEN.blit(s, (p1[0] + dx * t - s.get_width() // 2,
+                    p1[1] + dy * t - s.get_height() // 2))
+
+
+def draw_padlock(cx, cy):
+  # arc (nansa)
+  pygame.draw.arc(SCREEN, CHAIN_DARK, (cx - 11, cy - 24, 22, 28), 0, math.pi, 5)
+  pygame.draw.arc(SCREEN, CHAIN_LIGHT, (cx - 11, cy - 24, 22, 28), 0, math.pi, 2)
+  # cos
+  body = pygame.Rect(cx - 16, cy - 6, 32, 26)
+  pygame.draw.rect(SCREEN, LOCK_GOLD, body, border_radius=5)
+  pygame.draw.rect(SCREEN, (120, 85, 10), body, 3, border_radius=5)
+  # forat de la clau
+  pygame.draw.circle(SCREEN, (60, 40, 5), (cx, cy + 5), 4)
+  pygame.draw.rect(SCREEN, (60, 40, 5), (cx - 2, cy + 6, 4, 8))
+
+
+def draw_locked_overlay(rect):
+  """Cadenes creuades i cadenat sobre un botó bloquejat."""
+  prev_clip = SCREEN.get_clip()
+  SCREEN.set_clip(rect)
+  draw_chain((rect.x - 8, rect.y - 4), (rect.right + 8, rect.bottom + 4))
+  draw_chain((rect.x - 8, rect.bottom + 4), (rect.right + 8, rect.y - 4))
+  SCREEN.set_clip(prev_clip)
+  draw_padlock(rect.x + 40, rect.centery - 2)
+
+
 def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
-  """opts: llista de (clau, text, descripció, activat)."""
+  """opts: llista de (clau, text, descripció, activat[, bloquejat])."""
   SCREEN.fill(BG_COLOR)
 
   t = BIG_FONT.render(title, True, TEXT_COLOR)
@@ -1181,8 +1262,9 @@ def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
   sub = FONT.render(subtitle, True, SOFT_TEXT)
   SCREEN.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 180))
 
-  for i, (rect, (key, label, desc, enabled)) in enumerate(
-      zip(get_buttons(len(opts)), opts)):
+  for i, (rect, o) in enumerate(zip(get_buttons(len(opts)), opts)):
+    key, label, desc, enabled = o[:4]
+    locked = len(o) > 4 and o[4]
     hover = enabled and rect.collidepoint(mouse_pos)
     fill = (
         (255, 240, 205) if hover else (250, 232, 195)
@@ -1198,6 +1280,9 @@ def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
     SCREEN.blit(t1, (rect.centerx - t1.get_width() // 2, rect.y + 10))
     t2 = FONT.render(desc, True, color)
     SCREEN.blit(t2, (rect.centerx - t2.get_width() // 2, rect.y + 48))
+
+    if locked:
+      draw_locked_overlay(rect)
 
   h = FONT.render(hint, True, SOFT_TEXT)
   SCREEN.blit(h, (WIDTH // 2 - h.get_width() // 2, HEIGHT - 60))
@@ -1670,10 +1755,16 @@ class App:
           ("online", "JUGAR ONLINE", online_desc, online_ok),
       ], "Clica una opció o prem 1 / 2 / 3   -   M = enrere")
     if s == "diff":
-      opts = [(k, LEVEL_INFO[k][0], f"{LEVEL_INFO[k][1]} (+{POINTS[k]} punts)", True)
-              for k in LEVELS]
+      opts = []
+      for k in LEVELS:
+        locked = is_locked(k)
+        if locked:
+          desc = f"Et falten {UNLOCK_POINTS - SAVE['points']} punts per desbloquejar"
+        else:
+          desc = f"{LEVEL_INFO[k][1]} (+{POINTS[k]} punts)"
+        opts.append((k, LEVEL_INFO[k][0], desc, not locked, locked))
       return ("Dificultat", "Com de fort vols el bot?", opts,
-              "Clica una opció o prem 1 / 2 / 3   -   M = enrere")
+              "Clica una opció o prem 1 / 2 / 3 / 4   -   M = enrere")
     if s == "side":
       a, b = ("les blanques", "les negres") if self.kind == "morris" else ("els vermells", "els grocs")
       return ("Qui comença?", "El primer jugador comença la partida", [
@@ -1720,6 +1811,8 @@ class App:
     elif s == "diff":
       if pick == "back":
         self.state = "modes"
+      elif is_locked(pick):
+        return                    # nivell bloquejat: no es pot triar
       else:
         self.difficulty = pick
         SAVE["difficulty"] = pick
@@ -1753,6 +1846,10 @@ class App:
       self.game = Morris(rules, track=(self.mode != "online"))
     else:
       self.game = Connect4()
+
+    # seguretat: sense 2000 punts no es pot jugar l'impossible
+    if self.mode == "bot" and is_locked(self.difficulty):
+      self.difficulty = "hard"
 
     self.me = self.bot_role = self.bot = None
     if self.mode == "bot":
@@ -1828,8 +1925,11 @@ class App:
         if blocked:
           lines.append("T'has quedat sense moviments")
         lines.append("Torna-ho a provar!")
+      before = SAVE["points"]
       SAVE["points"] += pts
       lines.append(f"Total: {SAVE['points']} punts")
+      if before < UNLOCK_POINTS <= SAVE["points"]:
+        lines.append("Has desbloquejat el nivell IMPOSSIBLE!")
 
     elif mode == "local":
       rec = SAVE["records"][kind]["local"]
@@ -1904,10 +2004,11 @@ class App:
       return
     if self.anim and self.anim.active():
       return
+    # la pista usa el bot més fort: sempre és la millor jugada que sap trobar
     if self.kind == "morris":
-      self.hint = Bot(think=0.4, max_depth=12).choose(g, g.turn)
+      self.hint = Bot(**HINT_PARAMS["morris"]).choose(g, g.turn)
     else:
-      self.hint = C4Bot(think=0.4, max_depth=14).choose(g, g.turn)
+      self.hint = C4Bot(**HINT_PARAMS["c4"]).choose(g, g.turn)
     self.assisted = True
 
   # ---------- entrada ----------
