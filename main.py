@@ -214,7 +214,7 @@ def _lighter(c):
 
 SAVE_KEY = "jocs_de_taula_save_v1"
 SAVE_FILE = os.path.join(os.path.expanduser("~"), ".jocs_de_taula.json")
-GAMES = ("morris", "c4")
+GAMES = ("morris", "c4", "chess", "go")
 
 
 def default_save():
@@ -1205,10 +1205,921 @@ BOT_PARAMS = {
         "hard": dict(think=0.5 if HAS_JS else 0.8, max_depth=14),
         "impossible": dict(think=1.5 if HAS_JS else 3.0, max_depth=42),
     },
+    "chess": {
+        "easy": dict(think=0.05, max_depth=1, blunder=0.35),
+        "medium": dict(think=0.3, max_depth=2, blunder=0.08),
+        "hard": dict(think=0.6 if HAS_JS else 1.0, max_depth=4),
+        "impossible": dict(think=1.5 if HAS_JS else 3.0, max_depth=8),
+    },
+    "go": {
+        "easy": dict(think=0, blunder=0.3, playouts=False),
+        "medium": dict(think=0, blunder=0.06, playouts=False),
+        "hard": dict(think=0.6 if HAS_JS else 1.0, blunder=0, playouts=True, top=6),
+        "impossible": dict(think=1.5 if HAS_JS else 3.0, blunder=0, playouts=True, top=8),
+    },
 }
 
 # La pista fa servir sempre el bot més fort, així és la millor jugada possible
 HINT_PARAMS = {k: BOT_PARAMS[k]["impossible"] for k in BOT_PARAMS}
+
+
+# ---------------------------------------------------------------
+# ESCACS: JOC (regles completes, sense promoció triada: sempre dama)
+# ---------------------------------------------------------------
+# Tauler de 64 caselles: índex = fila * 8 + columna, fila 0 = dalt (negres).
+# Peces: 1 peó, 2 cavall, 3 alfil, 4 torre, 5 dama, 6 rei.
+# Positiu = blanques, negatiu = negres.
+
+CH_KNIGHT = [[] for _ in range(64)]
+CH_KING = [[] for _ in range(64)]
+CH_BISHOP_RAYS = [[] for _ in range(64)]
+CH_ROOK_RAYS = [[] for _ in range(64)]
+
+
+def _init_chess_tables():
+  for sq in range(64):
+    r, c = sq >> 3, sq & 7
+    for dr, dc in ((1, 2), (2, 1), (-1, 2), (-2, 1),
+                   (1, -2), (2, -1), (-1, -2), (-2, -1)):
+      rr, cc = r + dr, c + dc
+      if 0 <= rr < 8 and 0 <= cc < 8:
+        CH_KNIGHT[sq].append(rr * 8 + cc)
+    for dr in (-1, 0, 1):
+      for dc in (-1, 0, 1):
+        if dr or dc:
+          rr, cc = r + dr, c + dc
+          if 0 <= rr < 8 and 0 <= cc < 8:
+            CH_KING[sq].append(rr * 8 + cc)
+    for rays, dirs in (
+        (CH_BISHOP_RAYS, ((1, 1), (1, -1), (-1, 1), (-1, -1))),
+        (CH_ROOK_RAYS, ((1, 0), (-1, 0), (0, 1), (0, -1)))):
+      for dr, dc in dirs:
+        ray = []
+        rr, cc = r + dr, c + dc
+        while 0 <= rr < 8 and 0 <= cc < 8:
+          ray.append(rr * 8 + cc)
+          rr += dr
+          cc += dc
+        if ray:
+          rays[sq].append(ray)
+
+
+_init_chess_tables()
+
+CH_START = ([-4, -2, -3, -5, -6, -3, -2, -4] + [-1] * 8 + [0] * 32
+            + [1] * 8 + [4, 2, 3, 5, 6, 3, 2, 4])
+
+# drets d'enroc: 1 = rei blanc, 2 = dama blanca, 4 = rei negre, 8 = dama negra
+CH_CMASK = [15] * 64
+CH_CMASK[60] = 12
+CH_CMASK[56] = 13
+CH_CMASK[63] = 14
+CH_CMASK[4] = 3
+CH_CMASK[0] = 7
+CH_CMASK[7] = 11
+
+CH_VAL = (0, 100, 320, 330, 500, 900, 0)
+CH_MATE = 100000
+CH_LETTERS = {1: "P", 2: "C", 3: "A", 4: "T", 5: "D", 6: "R"}
+
+
+def _build_pst():
+  pst = {p: [0] * 64 for p in range(1, 7)}
+  for sq in range(64):
+    r, c = sq >> 3, sq & 7
+    rr = 7 - r                                  # fila des del costat blanc
+    cen = min(c, 7 - c) + min(rr, 7 - rr)       # 0..6: com de centrada
+    pst[1][sq] = ((0, 0, 3, 8, 16, 28, 45, 0)[rr]
+                  + (6 if c in (3, 4) and rr in (3, 4) else 0))
+    pst[2][sq] = 8 * cen - 20
+    pst[3][sq] = 4 * cen - 8
+    pst[4][sq] = 10 if rr == 6 else 0
+    pst[5][sq] = 2 * cen
+    pst[6][sq] = (10 if c in (1, 2, 6) else 0) if rr == 0 else -15 * rr
+  return pst
+
+
+CH_PST_W = _build_pst()
+CH_PST_B = {p: [t[sq ^ 56] for sq in range(64)] for p, t in CH_PST_W.items()}
+
+
+class Chess:
+
+  def __init__(self):
+    self.board = list(CH_START)
+    self.side = 1                  # 1 = blanques, -1 = negres
+    self.castle = 15
+    self.ep = -1                   # casella de captura al pas
+    self.half = 0                  # semi-moviments sense captura ni peó
+    self.kpos = [60, 4]            # reis: blanc, negre
+    self.winner = None
+    self.draw = False
+    self.draw_reason = ""
+    self.checkmate = False
+    self.move_count = 0
+    self.last_move = None          # (origen, destí)
+    self.stack = []
+    self.selected = None
+    self.sel_moves = []
+    self.history = {}
+    self.register_position()
+
+  @property
+  def turn(self):
+    return "W" if self.side == 1 else "B"
+
+  @staticmethod
+  def from_fen(fen):
+    g = Chess()
+    parts = fen.split()
+    g.board = [0] * 64
+    r = c = 0
+    for ch in parts[0]:
+      if ch == "/":
+        r += 1
+        c = 0
+      elif ch.isdigit():
+        c += int(ch)
+      else:
+        p = "pnbrqk".index(ch.lower()) + 1
+        g.board[r * 8 + c] = p if ch.isupper() else -p
+        if p == 6:
+          g.kpos[0 if ch.isupper() else 1] = r * 8 + c
+        c += 1
+    g.side = 1 if parts[1] == "w" else -1
+    cs = parts[2]
+    g.castle = ((1 if "K" in cs else 0) | (2 if "Q" in cs else 0)
+                | (4 if "k" in cs else 0) | (8 if "q" in cs else 0))
+    g.ep = (-1 if parts[3] == "-"
+            else (8 - int(parts[3][1])) * 8 + "abcdefgh".index(parts[3][0]))
+    g.history = {}
+    return g
+
+  def clone(self):
+    c = Chess.__new__(Chess)
+    c.board = self.board[:]
+    c.side = self.side
+    c.castle = self.castle
+    c.ep = self.ep
+    c.half = self.half
+    c.kpos = self.kpos[:]
+    return c
+
+  # ---------- atacs ----------
+  def attacked(self, sq, by):
+    """La casella 'sq' està atacada per les peces del color 'by' (1 / -1)?"""
+    b = self.board
+    c = sq & 7
+    if by == 1:
+      if sq < 56:
+        if c > 0 and b[sq + 7] == 1:
+          return True
+        if c < 7 and b[sq + 9] == 1:
+          return True
+    else:
+      if sq >= 8:
+        if c > 0 and b[sq - 9] == -1:
+          return True
+        if c < 7 and b[sq - 7] == -1:
+          return True
+    n = 2 * by
+    for t in CH_KNIGHT[sq]:
+      if b[t] == n:
+        return True
+    k = 6 * by
+    for t in CH_KING[sq]:
+      if b[t] == k:
+        return True
+    bq, rq, qq = 3 * by, 4 * by, 5 * by
+    for ray in CH_BISHOP_RAYS[sq]:
+      for t in ray:
+        q = b[t]
+        if q:
+          if q == bq or q == qq:
+            return True
+          break
+    for ray in CH_ROOK_RAYS[sq]:
+      for t in ray:
+        q = b[t]
+        if q:
+          if q == rq or q == qq:
+            return True
+          break
+    return False
+
+  def in_check(self):
+    return self.attacked(self.kpos[0 if self.side == 1 else 1], -self.side)
+
+  # ---------- generació de moviments ----------
+  def gen(self, caps=False):
+    """Moviments pseudo-legals (f, t, promoció, marca). caps = només captures."""
+    b = self.board
+    s = self.side
+    out = []
+    for f in range(64):
+      p = b[f]
+      if p * s <= 0:
+        continue
+      a = p if p > 0 else -p
+      if a == 1:
+        d = -8 if s == 1 else 8
+        pr_rank = 0 if s == 1 else 7
+        t = f + d
+        if b[t] == 0:
+          if (t >> 3) == pr_rank:
+            out.extend(((f, t, 5, 0), (f, t, 4, 0), (f, t, 3, 0), (f, t, 2, 0)))
+          elif not caps:
+            out.append((f, t, 0, 0))
+            if (f >> 3) == (6 if s == 1 else 1) and b[t + d] == 0:
+              out.append((f, t + d, 0, 4))
+        c = f & 7
+        for dc in (-1, 1):
+          if (dc < 0 and c == 0) or (dc > 0 and c == 7):
+            continue
+          t = f + d + dc
+          q = b[t]
+          if q * s < 0:
+            if (t >> 3) == pr_rank:
+              out.extend(((f, t, 5, 0), (f, t, 4, 0), (f, t, 3, 0), (f, t, 2, 0)))
+            else:
+              out.append((f, t, 0, 0))
+          elif t == self.ep:
+            out.append((f, t, 0, 1))
+      elif a == 2:
+        for t in CH_KNIGHT[f]:
+          q = b[t]
+          if q * s <= 0 and not (caps and q == 0):
+            out.append((f, t, 0, 0))
+      elif a == 6:
+        for t in CH_KING[f]:
+          q = b[t]
+          if q * s <= 0 and not (caps and q == 0):
+            out.append((f, t, 0, 0))
+        if not caps:
+          if s == 1 and f == 60:
+            if (self.castle & 1 and b[61] == 0 and b[62] == 0 and b[63] == 4
+                and not self.attacked(60, -1) and not self.attacked(61, -1)
+                and not self.attacked(62, -1)):
+              out.append((60, 62, 0, 2))
+            if (self.castle & 2 and b[59] == 0 and b[58] == 0 and b[57] == 0
+                and b[56] == 4 and not self.attacked(60, -1)
+                and not self.attacked(59, -1) and not self.attacked(58, -1)):
+              out.append((60, 58, 0, 3))
+          elif s == -1 and f == 4:
+            if (self.castle & 4 and b[5] == 0 and b[6] == 0 and b[7] == -4
+                and not self.attacked(4, 1) and not self.attacked(5, 1)
+                and not self.attacked(6, 1)):
+              out.append((4, 6, 0, 2))
+            if (self.castle & 8 and b[3] == 0 and b[2] == 0 and b[1] == 0
+                and b[0] == -4 and not self.attacked(4, 1)
+                and not self.attacked(3, 1) and not self.attacked(2, 1)):
+              out.append((4, 2, 0, 3))
+      else:
+        rl = []
+        if a != 4:
+          rl.append(CH_BISHOP_RAYS[f])
+        if a != 3:
+          rl.append(CH_ROOK_RAYS[f])
+        for rays in rl:
+          for ray in rays:
+            for t in ray:
+              q = b[t]
+              if q == 0:
+                if not caps:
+                  out.append((f, t, 0, 0))
+              else:
+                if q * s < 0:
+                  out.append((f, t, 0, 0))
+                break
+    return out
+
+  def make(self, m):
+    f, t, pr, fl = m
+    b = self.board
+    s = self.side
+    piece = b[f]
+    cap = b[t]
+    capsq = t
+    if fl == 1:                                  # captura al pas
+      capsq = t + 8 if s == 1 else t - 8
+      cap = b[capsq]
+      b[capsq] = 0
+    b[t] = pr * s if pr else piece
+    b[f] = 0
+    if fl == 2:                                  # enroc curt
+      b[f + 1] = b[f + 3]
+      b[f + 3] = 0
+    elif fl == 3:                                # enroc llarg
+      b[f - 1] = b[f - 4]
+      b[f - 4] = 0
+    rec = (m, piece, cap, capsq, self.castle, self.ep, self.half)
+    self.castle &= CH_CMASK[f] & CH_CMASK[t]
+    self.ep = (f + t) >> 1 if fl == 4 else -1
+    self.half = 0 if (piece == 1 or piece == -1 or cap) else self.half + 1
+    if piece == 6:
+      self.kpos[0] = t
+    elif piece == -6:
+      self.kpos[1] = t
+    self.side = -s
+    return rec
+
+  def unmake(self, rec):
+    m, piece, cap, capsq, castle, ep, half = rec
+    f, t, pr, fl = m
+    b = self.board
+    b[f] = piece
+    if fl == 1:
+      b[t] = 0
+      b[capsq] = cap
+    else:
+      b[t] = cap
+    if fl == 2:
+      b[f + 3] = b[f + 1]
+      b[f + 1] = 0
+    elif fl == 3:
+      b[f - 4] = b[f - 1]
+      b[f - 1] = 0
+    if piece == 6:
+      self.kpos[0] = f
+    elif piece == -6:
+      self.kpos[1] = f
+    self.castle, self.ep, self.half = castle, ep, half
+    self.side = -self.side
+
+  def legal_moves(self):
+    s = self.side
+    ki = 0 if s == 1 else 1
+    res = []
+    for m in self.gen():
+      rec = self.make(m)
+      if not self.attacked(self.kpos[ki], -s):
+        res.append(m)
+      self.unmake(rec)
+    return res
+
+  # ---------- estat de la partida ----------
+  def key(self):
+    return (tuple(self.board), self.side, self.castle, self.ep)
+
+  def register_position(self):
+    k = self.key()
+    n = self.history.get(k, 0) + 1
+    self.history[k] = n
+    if n >= 3:
+      self.draw = True
+      self.draw_reason = "Repetició de posició"
+
+  def insufficient(self):
+    pcs = [(abs(p), sq) for sq, p in enumerate(self.board)
+           if p and abs(p) != 6]
+    if not pcs:
+      return True
+    if len(pcs) == 1 and pcs[0][0] in (2, 3):
+      return True
+    if all(k == 3 for k, _ in pcs):
+      colors = {((sq >> 3) + (sq & 7)) & 1 for _, sq in pcs}
+      return len(colors) == 1
+    return False
+
+  def update_status(self):
+    if not self.legal_moves():
+      if self.in_check():
+        self.winner = "B" if self.side == 1 else "W"
+        self.checkmate = True
+        self.draw = False
+      else:
+        self.draw = True
+        self.draw_reason = "Rei ofegat"
+      return
+    if self.draw:
+      return
+    if self.half >= 100:
+      self.draw = True
+      self.draw_reason = "Regla dels 50 moviments"
+    elif self.insufficient():
+      self.draw = True
+      self.draw_reason = "Material insuficient"
+
+  def snapshot(self):
+    return dict(
+        board=self.board[:], side=self.side, turn=self.turn,
+        castle=self.castle, ep=self.ep, half=self.half, kpos=self.kpos[:],
+        move_count=self.move_count, last_move=self.last_move,
+        history=dict(self.history))
+
+  def undo_one(self):
+    if not self.stack:
+      return False
+    s = self.stack.pop()
+    self.board = s["board"]
+    self.side = s["side"]
+    self.castle = s["castle"]
+    self.ep = s["ep"]
+    self.half = s["half"]
+    self.kpos = s["kpos"]
+    self.move_count = s["move_count"]
+    self.last_move = s["last_move"]
+    self.history = s["history"]
+    self.winner = None
+    self.checkmate = False
+    self.draw = False
+    self.draw_reason = ""
+    self.selected = None
+    self.sel_moves = []
+    return True
+
+  def play(self, m):
+    snap = self.snapshot()
+    self.make(m)
+    self.stack.append(snap)
+    self.last_move = (m[0], m[1])
+    self.move_count += 1
+    self.selected = None
+    self.sel_moves = []
+    self.register_position()
+    self.update_status()
+
+  def handle_click(self, sq, my_role):
+    """Primer clic: tria la peça. Segon clic: la mou (si el moviment és legal)."""
+    if self.winner or self.draw or self.turn != my_role:
+      return False
+    if self.selected is not None:
+      for m in self.sel_moves:
+        if m[1] == sq and m[2] in (0, 5):        # promoció automàtica a dama
+          self.play(m)
+          return True
+    if sq == self.selected:
+      self.selected = None
+      self.sel_moves = []
+    elif self.board[sq] * self.side > 0:
+      self.selected = sq
+      self.sel_moves = [m for m in self.legal_moves() if m[0] == sq]
+    else:
+      self.selected = None
+      self.sel_moves = []
+    return False
+
+
+# ---------------------------------------------------------------
+# ESCACS: BOT (negamax + alfa-beta + quiescence + aprofundiment iteratiu)
+# ---------------------------------------------------------------
+
+
+class ChessBot:
+
+  def __init__(self, think=0.8, max_depth=4, blunder=0.0):
+    self.think = think
+    self.max_depth = max_depth
+    self.blunder = blunder
+    self.deadline = 0
+    self.nodes = 0
+
+  def evaluate(self, pos):
+    sc = 0
+    for sq, p in enumerate(pos.board):
+      if p:
+        if p > 0:
+          sc += CH_VAL[p] + CH_PST_W[p][sq]
+        else:
+          sc -= CH_VAL[-p] + CH_PST_B[-p][sq]
+    return sc if pos.side == 1 else -sc
+
+  def order(self, pos, moves):
+    b = pos.board
+
+    def key(m):
+      f, t, pr, fl = m
+      v = b[t]
+      sc = 0
+      if v:
+        sc = 10 * CH_VAL[abs(v)] - CH_VAL[abs(b[f])] // 10
+      elif fl == 1:
+        sc = 1000
+      if pr:
+        sc += CH_VAL[pr]
+      return -sc
+
+    return sorted(moves, key=key)
+
+  def qs(self, pos, alpha, beta, ply):
+    self.nodes += 1
+    if self.nodes & 255 == 0 and time.time() > self.deadline:
+      raise Timeout
+    stand = self.evaluate(pos)
+    if stand >= beta:
+      return stand
+    if stand > alpha:
+      alpha = stand
+    if ply >= 8:
+      return stand
+    s = pos.side
+    ki = 0 if s == 1 else 1
+    for m in self.order(pos, pos.gen(True)):
+      rec = pos.make(m)
+      if pos.attacked(pos.kpos[ki], -s):
+        pos.unmake(rec)
+        continue
+      sc = -self.qs(pos, -beta, -alpha, ply + 1)
+      pos.unmake(rec)
+      if sc >= beta:
+        return sc
+      if sc > alpha:
+        alpha = sc
+    return alpha
+
+  def nega(self, pos, depth, alpha, beta, ply):
+    self.nodes += 1
+    if self.nodes & 255 == 0 and time.time() > self.deadline:
+      raise Timeout
+    if pos.half >= 100:
+      return 0
+    s = pos.side
+    ki = 0 if s == 1 else 1
+    incheck = pos.attacked(pos.kpos[ki], -s)
+    if incheck and ply < 12:
+      depth += 1
+    if depth <= 0:
+      return self.qs(pos, alpha, beta, 0)
+    best = -INF
+    any_legal = False
+    for m in self.order(pos, pos.gen()):
+      rec = pos.make(m)
+      if pos.attacked(pos.kpos[ki], -s):
+        pos.unmake(rec)
+        continue
+      any_legal = True
+      sc = -self.nega(pos, depth - 1, -beta, -alpha, ply + 1)
+      pos.unmake(rec)
+      if sc > best:
+        best = sc
+        if sc > alpha:
+          alpha = sc
+          if alpha >= beta:
+            break
+    if not any_legal:
+      return -(CH_MATE - ply) if incheck else 0
+    return best
+
+  def choose(self, game, role=None):
+    """Retorna el moviment (f, t, promoció, marca) o None si no n'hi ha."""
+    pos = game.clone()
+    moves = pos.legal_moves()
+    if not moves:
+      return None
+    if len(moves) == 1:
+      return moves[0]
+    random.shuffle(moves)
+    if self.blunder and random.random() < self.blunder:
+      return random.choice(moves)
+    moves = self.order(pos, moves)
+
+    # Evitar taules per repetició quan no cal (com els altres bots)
+    hist = getattr(game, "history", {})
+    s = pos.side
+    pen = {}
+    for m in moves:
+      rec = pos.make(m)
+      c = hist.get((tuple(pos.board), pos.side, pos.castle, pos.ep), 0)
+      pos.unmake(rec)
+      pen[m] = None if c + 1 >= 3 else c * 20
+
+    best = moves[0]
+    self.deadline = time.time() + self.think
+    self.nodes = 0
+    for depth in range(1, self.max_depth + 1):
+      try:
+        cur, cur_sc, alpha = None, -INF, -INF
+        for m in moves:
+          if pen[m] is None:
+            sc = 0
+          else:
+            rec = pos.make(m)
+            sc = -self.nega(pos, depth - 1, -INF, -alpha, 1) - pen[m]
+            pos.unmake(rec)
+          if sc > cur_sc:
+            cur_sc, cur = sc, m
+            alpha = max(alpha, sc)
+        best = cur
+        moves.remove(cur)
+        moves.insert(0, cur)
+        if abs(cur_sc) >= CH_MATE - 100:
+          break
+      except Timeout:
+        break
+    return best
+
+  def play(self, game, role=None):
+    m = self.choose(game, role)
+    if m is not None:
+      game.play(m)
+
+
+# ---------------------------------------------------------------
+# GO 9x9: JOC (puntuació per àrees, komi 7,5, sense empats)
+# ---------------------------------------------------------------
+
+GO_N = 9
+GO_NB = []
+for _i in range(GO_N * GO_N):
+  _r, _c = divmod(_i, GO_N)
+  GO_NB.append([_r2 * GO_N + _c2 for _r2, _c2 in
+                ((_r - 1, _c), (_r + 1, _c), (_r, _c - 1), (_r, _c + 1))
+                if 0 <= _r2 < GO_N and 0 <= _c2 < GO_N])
+
+
+def go_group(board, i):
+  """Retorna (pedres del grup, llibertats) del grup que conté la pedra 'i'."""
+  color = board[i]
+  stack = [i]
+  seen = {i}
+  libs = set()
+  while stack:
+    x = stack.pop()
+    for n in GO_NB[x]:
+      v = board[n]
+      if v == 0:
+        libs.add(n)
+      elif v == color and n not in seen:
+        seen.add(n)
+        stack.append(n)
+  return seen, libs
+
+
+def go_play(board, i, color):
+  """Posa una pedra. Retorna (tauler nou, captures) o None si és suïcidi/ocupat."""
+  if board[i]:
+    return None
+  b = board[:]
+  b[i] = color
+  opp = 3 - color
+  cap = 0
+  for n in GO_NB[i]:
+    if b[n] == opp:
+      grp, libs = go_group(b, n)
+      if not libs:
+        for x in grp:
+          b[x] = 0
+        cap += len(grp)
+  grp, libs = go_group(b, i)
+  if not libs:
+    return None
+  return b, cap
+
+
+def go_area(board):
+  """Punts per àrees: pedres + territori envoltat només per un color."""
+  black = white = 0
+  seen = set()
+  for i, v in enumerate(board):
+    if v == 1:
+      black += 1
+    elif v == 2:
+      white += 1
+    elif i not in seen:
+      region = [i]
+      seen.add(i)
+      borders = set()
+      k = 0
+      while k < len(region):
+        for n in GO_NB[region[k]]:
+          nv = board[n]
+          if nv == 0:
+            if n not in seen:
+              seen.add(n)
+              region.append(n)
+          else:
+            borders.add(nv)
+        k += 1
+      if borders == {1}:
+        black += len(region)
+      elif borders == {2}:
+        white += len(region)
+  return black, white
+
+
+class Go:
+  KOMI = 7.5
+  MAX_MOVES = 160            # si s'arriba aquí, la partida es puntua tal com està
+
+  def __init__(self):
+    self.board = [0] * (GO_N * GO_N)
+    self.cur = 1               # 1 = negres (comencen), 2 = blanques
+    self.passes = 0
+    self.winner = None
+    self.draw = False
+    self.move_count = 0
+    self.last_move = None      # índex de la casella (None = ha passat)
+    self.caps = {1: 0, 2: 0}   # pedres capturades per cada color
+    self.history = {tuple(self.board)}
+    self.stack = []
+    self.score_text = ""
+
+  @property
+  def turn(self):
+    return "B" if self.cur == 1 else "W"
+
+  def is_legal(self, i, color=None):
+    res = go_play(self.board, i, color or self.cur)
+    return res is not None and tuple(res[0]) not in self.history
+
+  def snapshot(self):
+    return dict(
+        board=self.board[:], cur=self.cur, turn=self.turn,
+        passes=self.passes, caps=dict(self.caps),
+        history=set(self.history), move_count=self.move_count,
+        last_move=self.last_move)
+
+  def undo_one(self):
+    if not self.stack:
+      return False
+    s = self.stack.pop()
+    self.board = s["board"]
+    self.cur = s["cur"]
+    self.passes = s["passes"]
+    self.caps = s["caps"]
+    self.history = s["history"]
+    self.move_count = s["move_count"]
+    self.last_move = s["last_move"]
+    self.winner = None
+    self.score_text = ""
+    return True
+
+  def handle_click(self, i, role):
+    if self.winner or self.turn != role:
+      return False
+    res = go_play(self.board, i, self.cur)
+    if res is None or tuple(res[0]) in self.history:
+      return False
+    snap = self.snapshot()
+    nb, cap = res
+    self.board = nb
+    self.caps[self.cur] += cap
+    self.history.add(tuple(nb))
+    self.passes = 0
+    self.cur = 3 - self.cur
+    self.move_count += 1
+    self.last_move = i
+    self.stack.append(snap)
+    self.check_end()
+    return True
+
+  def pass_move(self, role):
+    if self.winner or self.turn != role:
+      return False
+    snap = self.snapshot()
+    self.passes += 1
+    self.cur = 3 - self.cur
+    self.move_count += 1
+    self.last_move = None
+    self.stack.append(snap)
+    self.check_end()
+    return True
+
+  def check_end(self):
+    if self.passes >= 2 or self.move_count >= self.MAX_MOVES:
+      black, white = go_area(self.board)
+      self.winner = "B" if black > white + self.KOMI else "W"
+      self.score_text = (
+          f"Negres {black}  -  Blanques {white} + {self.KOMI} de komi")
+
+
+# ---------------------------------------------------------------
+# GO: BOT (heurística tàctica + simulacions a l'atzar als nivells alts)
+# ---------------------------------------------------------------
+
+
+class GoBot:
+  """Bot senzill de Go: captura, salva les seves pedres i evita els ulls propis.
+
+  Als nivells alts prova les millors jugades amb partides a l'atzar.
+  """
+
+  def __init__(self, think=0.5, blunder=0.0, playouts=False, top=6):
+    self.think = think
+    self.blunder = blunder
+    self.playouts = playouts
+    self.top = top
+
+  def heuristic(self, game, board, nb, cap, i, color):
+    opp = 3 - color
+    r, c = divmod(i, GO_N)
+    s = 0.0
+    nbs = GO_NB[i]
+    if cap == 0 and all(board[n] == color for n in nbs):
+      s -= 100                                   # omplir un ull propi
+    grp, libs = go_group(nb, i)
+    if cap == 0 and len(libs) == 1:
+      s -= 12 + 8 * len(grp)                     # s'auto-posa en atari
+    elif len(libs) == 2:
+      s -= 2
+    s += 12 * cap
+    seen_opp = set()
+    seen_own = set()
+    for n in nbs:
+      if nb[n] == opp and n not in seen_opp:
+        g1, l1 = go_group(nb, n)
+        seen_opp |= g1
+        if len(l1) == 1:
+          s += 6 + 2 * len(g1)                   # posa l'adversari en atari
+        elif len(l1) == 2:
+          s += 1
+      elif board[n] == color and n not in seen_own:
+        g0, l0 = go_group(board, n)
+        seen_own |= g0
+        if len(l0) == 1:                         # estava en atari: la salva?
+          g2, l2 = go_group(nb, n)
+          if len(l2) >= 2:
+            s += 10 + 3 * len(g0)
+    d = min(r, c, GO_N - 1 - r, GO_N - 1 - c)
+    s += (-5, 0, 3, 4, 4)[d]
+    lm = game.last_move
+    if isinstance(lm, int):
+      lr, lc = divmod(lm, GO_N)
+      if abs(lr - r) + abs(lc - c) <= 2:
+        s += 2
+    return s + random.random() * 1.5
+
+  def playout(self, board, to_move, me):
+    """Partida a l'atzar fins al final. True si 'me' guanya."""
+    b = board
+    color = to_move
+    passes = 0
+    for _ in range(80):
+      empt = [i for i in range(GO_N * GO_N) if b[i] == 0]
+      random.shuffle(empt)
+      moved = False
+      for i in empt[:10]:
+        if all(b[n] == color for n in GO_NB[i]):
+          continue
+        res = go_play(b, i, color)
+        if res is not None:
+          b = res[0]
+          moved = True
+          break
+      if moved:
+        passes = 0
+      else:
+        passes += 1
+        if passes >= 2:
+          break
+      color = 3 - color
+    black, white = go_area(b)
+    return (black > white + Go.KOMI) == (me == 1)
+
+  def choose(self, game, role):
+    """Retorna l'índex de la casella, o None si el millor és passar."""
+    color = 1 if role == "B" else 2
+    board = game.board
+    cands = []
+    for i in range(GO_N * GO_N):
+      if board[i]:
+        continue
+      res = go_play(board, i, color)
+      if res is not None and tuple(res[0]) not in game.history:
+        cands.append((i, res))
+    if not cands:
+      return None
+    if game.passes >= 1:                         # l'altre ha passat: passa si guanyes
+      black, white = go_area(board)
+      mine, theirs = ((black, white + Go.KOMI) if color == 1
+                      else (white + Go.KOMI, black))
+      if mine > theirs:
+        return None
+    scored = sorted(
+        ((self.heuristic(game, board, nb, cap, i, color), i, nb)
+         for i, (nb, cap) in cands), reverse=True)
+    if scored[0][0] < -40:
+      return None                                # només queden jugades dolentes
+    ok = [x for x in scored if x[0] > -40]
+    if self.blunder and random.random() < self.blunder:
+      return random.choice(ok)[1]
+    if not self.playouts or len(ok) == 1:
+      return ok[0][1]
+    top = ok[:self.top]
+    wins = [0] * len(top)
+    tries = [0] * len(top)
+    deadline = time.time() + self.think
+    n = 0
+    while time.time() < deadline:
+      k = n % len(top)
+      n += 1
+      if self.playout(top[k][2], 3 - color, color):
+        wins[k] += 1
+      tries[k] += 1
+    best = max(range(len(top)), key=lambda k: (
+        top[k][0] * 0.6 + 30 * (wins[k] / tries[k] if tries[k] else 0.5)))
+    return top[best][1]
+
+  def play(self, game, role):
+    i = self.choose(game, role)
+    if i is None:
+      game.pass_move(role)
+    else:
+      game.handle_click(i, role)
+
+
+def make_bot(kind, params):
+  return {"morris": Bot, "c4": C4Bot, "chess": ChessBot, "go": GoBot}[kind](**params)
 
 
 # ---------------------------------------------------------------
@@ -1260,6 +2171,8 @@ NUM_KEYS = [
     (pygame.K_2, pygame.K_KP2),
     (pygame.K_3, pygame.K_KP3),
     (pygame.K_4, pygame.K_KP4),
+    (pygame.K_5, pygame.K_KP5),
+    (pygame.K_6, pygame.K_KP6),
 ]
 C4_KEYS = [
     (pygame.K_1, pygame.K_KP1), (pygame.K_2, pygame.K_KP2),
@@ -1270,8 +2183,11 @@ C4_KEYS = [
 
 
 def get_buttons(n):
-  w, h = 460, 80
+  w = 460
   x = WIDTH // 2 - w // 2
+  if n >= 5:                       # menú llarg: botons més compactes
+    return [pygame.Rect(x, 215 + i * 72, w, 62) for i in range(n)]
+  h = 80
   step = 110 if n <= 3 else 100
   return [pygame.Rect(x, 235 + i * step, w, h) for i in range(n)]
 
@@ -1358,10 +2274,13 @@ def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
         5 if hover else 3, border_radius=14)
 
     color = TEXT_COLOR if enabled else (140, 130, 115)
+    compact = rect.height < 80
     t1 = TITLE_FONT.render(f"{i + 1} - {label}", True, color)
-    SCREEN.blit(t1, (rect.centerx - t1.get_width() // 2, rect.y + 10))
+    SCREEN.blit(t1, (rect.centerx - t1.get_width() // 2,
+                     rect.y + (3 if compact else 10)))
     t2 = FONT.render(desc, True, color)
-    SCREEN.blit(t2, (rect.centerx - t2.get_width() // 2, rect.y + 48))
+    SCREEN.blit(t2, (rect.centerx - t2.get_width() // 2,
+                     rect.y + (rect.height - 27 if compact else 48)))
 
     if locked:
       draw_locked_overlay(rect)
@@ -1391,12 +2310,37 @@ def menu_pick(opts, events):
 # TEXTOS COMUNS
 # ---------------------------------------------------------------
 
-FIRST = {"morris": "W", "c4": 1}
+FIRST = {"morris": "W", "c4": 1, "chess": "W", "go": "B"}
+SECOND = {"morris": "B", "c4": 2, "chess": "B", "go": "W"}
 SIDE_NAMES = {
     "morris": ("LES BLANQUES", "LES NEGRES"),
     "c4": ("ELS VERMELLS", "ELS GROCS"),
+    "chess": ("LES BLANQUES", "LES NEGRES"),
+    "go": ("LES NEGRES", "LES BLANQUES"),
 }
-GAME_TITLES = {"morris": "Tres en ratlla", "c4": "4 en ratlla"}
+SIDE_DESC = {
+    "morris": ("les blanques", "les negres"),
+    "c4": ("els vermells", "els grocs"),
+    "chess": ("les blanques", "les negres"),
+    "go": ("les negres", "les blanques"),
+}
+LOCAL_NAMES = {
+    "morris": ("Blanques", "Negres"),
+    "c4": ("Vermells", "Grocs"),
+    "chess": ("Blanques", "Negres"),
+    "go": ("Negres", "Blanques"),
+}
+GAME_TITLES = {"morris": "Tres en ratlla", "c4": "4 en ratlla",
+               "chess": "Escacs", "go": "Go 9x9"}
+
+
+def draw_text_for(g, kind):
+  """Motiu de les taules."""
+  if kind == "chess":
+    return g.draw_reason or "Taules"
+  if kind == "morris":
+    return "Posició repetida o massa moviments"
+  return "Tauler ple"
 
 
 def side_label(kind, p):
@@ -1409,7 +2353,7 @@ def record_text(app):
     return f"{LEVEL_INFO[app.difficulty][0].capitalize()}: {w}V  {l}D  {d}T"
   if app.mode == "local":
     a, b, c = SAVE["records"][app.kind]["local"]
-    n1, n2 = ("Blanques", "Negres") if app.kind == "morris" else ("Vermells", "Grocs")
+    n1, n2 = LOCAL_NAMES[app.kind]
     return f"{n1} {a}  {n2} {b}  Taules {c}"
   return ""
 
@@ -1445,6 +2389,8 @@ def status_text(app):
       base = f"¡¡GUANYEN {side_label(kind, g.winner)}!!"
     if kind == "morris" and g.blocked:
       base += " (rival bloquejat)"
+    elif kind == "chess":
+      base += " (escac i mat)"
     return base
   if g.draw:
     return "TAULES"
@@ -1453,6 +2399,10 @@ def status_text(app):
   who = side_label(kind, g.turn)
   if kind == "c4":
     return f"Torn: {who}"
+  if kind == "chess":
+    return f"Torn: {who}" + (" - ESCAC!" if g.in_check() else "")
+  if kind == "go":
+    return f"Torn: {who}" + (" (el rival ha passat)" if g.passes else "")
   left = g.unplaced.get(g.turn, 0)
   if left > 0:
     return f"Col·locació - Torn: {who} (Restants: {left})"
@@ -1461,7 +2411,7 @@ def status_text(app):
   return f"Moviment - Torn: {who} (a un espai adjacent)"
 
 
-def draw_button(rect, label, enabled=True, mouse=None):
+def draw_button(rect, label, enabled=True, mouse=None, small=False):
   mouse = mouse or pygame.mouse.get_pos()
   hover = enabled and rect.collidepoint(mouse)
   if enabled:
@@ -1472,7 +2422,7 @@ def draw_button(rect, label, enabled=True, mouse=None):
     fill, border, color = (222, 208, 182), (170, 155, 130), (160, 148, 128)
   pygame.draw.rect(SCREEN, fill, rect, border_radius=10)
   pygame.draw.rect(SCREEN, border, rect, 3, border_radius=10)
-  t = FONT.render(label, True, color)
+  t = (SMALL if small else FONT).render(label, True, color)
   SCREEN.blit(t, (rect.centerx - t.get_width() // 2,
                   rect.centery - t.get_height() // 2))
 
@@ -1489,6 +2439,8 @@ def game_buttons(app):
         ("undo", "Desfer", app.can_undo()),
         ("hint", "Pista", app.can_hint()),
     ]
+    if app.kind == "go":
+      items.append(("pass", "Passar", app.can_pass()))
   gap = 10
   w = (WIDTH - 2 * 30 - gap * (len(items) - 1)) // len(items)
   return [(pygame.Rect(30 + i * (w + gap), y, w, h), key, en)
@@ -1502,9 +2454,10 @@ def draw_footer(app):
   online = app.mode == "online"
   names = {"restart": "Reiniciar", "menu": "Menú",
            "undo": "Desfer" if online else f"Desfer (-{undo_cost(app)})",
-           "hint": "Pista" if online else f"Pista (-{hint_cost(app)})"}
+           "hint": "Pista" if online else f"Pista (-{hint_cost(app)})",
+           "pass": "Passar"}
   for (rect, key, en) in rects:
-    draw_button(rect, names[key], en)
+    draw_button(rect, names[key], en, small=len(rects) > 4)
 
 
 def back_button_rect():
@@ -1779,12 +2732,216 @@ def draw_c4(app):
 
 
 # ---------------------------------------------------------------
+# DIBUIX: ESCACS
+# ---------------------------------------------------------------
+
+CH_SQ = 64
+CH_X0 = 94
+CH_Y0 = 100
+
+
+def _mix(a, b, t):
+  return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def chess_pos(sq, flip):
+  """Cantonada superior esquerra de la casella (el tauler es gira si portes negres)."""
+  r, c = sq >> 3, sq & 7
+  if flip:
+    r, c = 7 - r, 7 - c
+  return CH_X0 + c * CH_SQ, CH_Y0 + r * CH_SQ
+
+
+def chess_sq_at(pos, flip):
+  c = (pos[0] - CH_X0) // CH_SQ
+  r = (pos[1] - CH_Y0) // CH_SQ
+  if not (0 <= c < 8 and 0 <= r < 8):
+    return None
+  if flip:
+    r, c = 7 - r, 7 - c
+  return r * 8 + c
+
+
+def draw_chess(app):
+  g = app.game
+  flip = app.chess_flip()
+  st = current_style()
+  SCREEN.fill(BG_COLOR)
+
+  title = TITLE_FONT.render("Escacs", True, TEXT_COLOR)
+  SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
+  draw_hud(app)
+
+  if app.mode == "local":
+    role = "Mode local"
+  else:
+    me = "BLANQUES" if app.me == "W" else "NEGRES"
+    role = f"Tu: {me}  -  Bot {LEVEL_INFO[app.difficulty][0].capitalize()}"
+  SCREEN.blit(FONT.render(role, True, (0, 100, 200)), (20, 60))
+  draw_turn_indicator(*(st["w"] if g.turn == "W" else st["b"]))
+
+  light = _mix(BG_COLOR, (255, 255, 255), 0.45)
+  dark = _mix(BG_COLOR, LINE_COLOR, 0.5)
+  for sq in range(64):
+    x, y = chess_pos(sq, flip)
+    pygame.draw.rect(
+        SCREEN, light if ((sq >> 3) + (sq & 7)) % 2 == 0 else dark,
+        (x, y, CH_SQ, CH_SQ))
+  pygame.draw.rect(
+      SCREEN, LINE_COLOR, (CH_X0 - 3, CH_Y0 - 3, 8 * CH_SQ + 6, 8 * CH_SQ + 6), 3)
+
+  files = "abcdefgh"
+  for i in range(8):
+    f = SMALL.render(files[7 - i if flip else i], True, SOFT_TEXT)
+    SCREEN.blit(f, (CH_X0 + i * CH_SQ + CH_SQ // 2 - f.get_width() // 2,
+                    CH_Y0 + 8 * CH_SQ + 6))
+    n = SMALL.render(str(i + 1 if flip else 8 - i), True, SOFT_TEXT)
+    SCREEN.blit(n, (CH_X0 - 20, CH_Y0 + i * CH_SQ + CH_SQ // 2 - n.get_height() // 2))
+
+  # últim moviment i rei en escac
+  if g.last_move:
+    for sq in g.last_move:
+      x, y = chess_pos(sq, flip)
+      pygame.draw.rect(SCREEN, LAST_COLOR, (x + 2, y + 2, CH_SQ - 4, CH_SQ - 4), 4)
+  if not g.draw and g.in_check():
+    x, y = chess_pos(g.kpos[0 if g.side == 1 else 1], flip)
+    pygame.draw.rect(SCREEN, COLOR_LOSE, (x + 1, y + 1, CH_SQ - 2, CH_SQ - 2), 5)
+
+  # casella triada i destins possibles (punts a sota de les peces)
+  if g.selected is not None:
+    x, y = chess_pos(g.selected, flip)
+    pygame.draw.rect(SCREEN, HIGHLIGHT_COLOR, (x, y, CH_SQ, CH_SQ), 5)
+  targets = {m[1] for m in g.sel_moves}
+  for t in targets:
+    if g.board[t] == 0 and not (g.ep == t and abs(g.board[g.selected]) == 1):
+      x, y = chess_pos(t, flip)
+      pygame.draw.circle(
+          SCREEN, HINT_COLOR, (x + CH_SQ // 2, y + CH_SQ // 2), 9)
+
+  for sq, p in enumerate(g.board):
+    if not p:
+      continue
+    x, y = chess_pos(sq, flip)
+    cx, cy = x + CH_SQ // 2, y + CH_SQ // 2
+    fill, border = st["w"] if p > 0 else st["b"]
+    draw_disc((cx, cy), fill, border, st["deco"], 26)
+    lum = 0.299 * fill[0] + 0.587 * fill[1] + 0.114 * fill[2]
+    letter = TITLE_FONT.render(
+        CH_LETTERS[abs(p)], True, (40, 40, 40) if lum > 150 else (245, 245, 245))
+    SCREEN.blit(letter, (cx - letter.get_width() // 2, cy - letter.get_height() // 2))
+
+  for t in targets:                      # captures: anell a sobre de la peça
+    if g.board[t] != 0 or (g.ep == t and abs(g.board[g.selected]) == 1):
+      x, y = chess_pos(t, flip)
+      pygame.draw.circle(
+          SCREEN, HINT_COLOR, (x + CH_SQ // 2, y + CH_SQ // 2), 30, 4)
+
+  # pista
+  if app.hint is not None and not g.winner and not g.draw:
+    for sq in app.hint[:2]:
+      x, y = chess_pos(sq, flip)
+      pygame.draw.rect(SCREEN, TIP_COLOR, (x + 1, y + 1, CH_SQ - 2, CH_SQ - 2), 5)
+    x1, y1 = chess_pos(app.hint[0], flip)
+    x2, y2 = chess_pos(app.hint[1], flip)
+    pygame.draw.line(
+        SCREEN, TIP_COLOR, (x1 + CH_SQ // 2, y1 + CH_SQ // 2),
+        (x2 + CH_SQ // 2, y2 + CH_SQ // 2), 3)
+
+  draw_footer(app)
+
+
+# ---------------------------------------------------------------
+# DIBUIX: GO
+# ---------------------------------------------------------------
+
+GO_CELL = 56
+GO_X0 = (WIDTH - GO_CELL * (GO_N - 1)) // 2
+GO_Y0 = 160
+
+
+def go_xy(i):
+  return GO_X0 + (i % GO_N) * GO_CELL, GO_Y0 + (i // GO_N) * GO_CELL
+
+
+def go_point_at(pos):
+  c = round((pos[0] - GO_X0) / GO_CELL)
+  r = round((pos[1] - GO_Y0) / GO_CELL)
+  if not (0 <= c < GO_N and 0 <= r < GO_N):
+    return None
+  x, y = go_xy(r * GO_N + c)
+  if math.hypot(pos[0] - x, pos[1] - y) > 27:
+    return None
+  return r * GO_N + c
+
+
+def draw_go(app):
+  g = app.game
+  st = current_style()
+  SCREEN.fill(BG_COLOR)
+
+  title = TITLE_FONT.render("Go 9x9", True, TEXT_COLOR)
+  SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
+  draw_hud(app)
+
+  if app.mode == "local":
+    role = "Mode local"
+  else:
+    me = "NEGRES" if app.me == "B" else "BLANQUES"
+    role = f"Tu: {me}  -  Bot {LEVEL_INFO[app.difficulty][0].capitalize()}"
+  SCREEN.blit(FONT.render(role, True, (0, 100, 200)), (20, 60))
+  draw_turn_indicator(*(st["b"] if g.cur == 1 else st["w"]))
+
+  caps = FONT.render(
+      f"Captures:  Negres {g.caps[1]}   Blanques {g.caps[2]}", True, SOFT_TEXT)
+  SCREEN.blit(caps, (WIDTH // 2 - caps.get_width() // 2, 92))
+
+  size = GO_CELL * (GO_N - 1)
+  panel = pygame.Rect(GO_X0 - 34, GO_Y0 - 34, size + 68, size + 68)
+  pygame.draw.rect(SCREEN, _mix(BG_COLOR, (205, 160, 85), 0.65), panel, border_radius=10)
+  pygame.draw.rect(SCREEN, LINE_COLOR, panel, 3, border_radius=10)
+  for i in range(GO_N):
+    pygame.draw.line(SCREEN, LINE_COLOR, (GO_X0, GO_Y0 + i * GO_CELL),
+                     (GO_X0 + size, GO_Y0 + i * GO_CELL), 2)
+    pygame.draw.line(SCREEN, LINE_COLOR, (GO_X0 + i * GO_CELL, GO_Y0),
+                     (GO_X0 + i * GO_CELL, GO_Y0 + size), 2)
+  for r, c in ((2, 2), (2, 6), (6, 2), (6, 6), (4, 4)):
+    pygame.draw.circle(SCREEN, LINE_COLOR, go_xy(r * GO_N + c), 5)
+
+  for i, v in enumerate(g.board):
+    if v:
+      fill, border = st["b"] if v == 1 else st["w"]
+      draw_disc(go_xy(i), fill, border, st["deco"], 24)
+
+  if isinstance(g.last_move, int):
+    pygame.draw.circle(SCREEN, LAST_COLOR, go_xy(g.last_move), 9, 3)
+
+  # pista (una casella, o passar)
+  if app.hint is not None and not g.winner:
+    if app.hint >= 0:
+      pygame.draw.circle(SCREEN, TIP_COLOR, go_xy(app.hint), 28, 4)
+    else:
+      t = FONT.render("Pista: passa", True, TIP_COLOR)
+      SCREEN.blit(t, (WIDTH // 2 - t.get_width() // 2, GO_Y0 + size + 40))
+
+  # previsualització de la pedra sota el ratolí
+  can_play = (not g.winner and not app.result
+              and (app.mode == "local" or g.turn == app.me))
+  if can_play:
+    i = go_point_at(pygame.mouse.get_pos())
+    if i is not None and g.board[i] == 0 and g.is_legal(i):
+      fill, _border = st["b"] if g.cur == 1 else st["w"]
+      pygame.draw.circle(SCREEN, fill, go_xy(i), 11)
+
+  draw_footer(app)
+
+
+# ---------------------------------------------------------------
 # PANTALLA DE RESULTAT (victòria / derrota / taules)
 # ---------------------------------------------------------------
 
 
 def result_buttons():
-  panel = pygame.Rect(WIDTH // 2 - 270, 230, 540, 280)
+  panel = pygame.Rect(WIDTH // 2 - 270, 215, 540, 330)
   again = pygame.Rect(panel.x + 30, panel.bottom - 70, 230, 48)
   menu = pygame.Rect(panel.right - 260, panel.bottom - 70, 230, 48)
   return panel, again, menu
@@ -1803,7 +2960,7 @@ def draw_result(app):
   t = RES_FONT.render(res["title"], True, res["color"])
   SCREEN.blit(t, (panel.centerx - t.get_width() // 2, panel.y + 28))
 
-  for i, line in enumerate(res["lines"][:4]):
+  for i, line in enumerate(res["lines"][:5]):
     s = FONT.render(line, True, TEXT_COLOR)
     SCREEN.blit(s, (panel.centerx - s.get_width() // 2, panel.y + 90 + i * 28))
 
@@ -1970,9 +3127,11 @@ class App:
       return ("Jocs de taula", f"Punts totals: {SAVE['points']}", [
           ("morris", "TRES EN RATLLA", "Tauler de tres quadrats", True),
           ("c4", "4 EN RATLLA", "Fitxes que cauen", True),
+          ("chess", "ESCACS", "Amb enroc i captura al pas", True),
+          ("go", "GO 9x9", "Captura territori amb pedres", True),
           ("shop", "BOTIGA", "Taulers i fitxes a canvi de punts", True),
           ("settings", "REGLES", "Variants de Tres en ratlla", True),
-      ], "Clica una opció o prem 1 / 2 / 3 / 4")
+      ], "Clica una opció o prem 1 - 6")
     if s == "modes":
       online_ok = self.kind == "morris" and HAS_JS
       if self.kind != "morris":
@@ -1998,7 +3157,7 @@ class App:
       return ("Dificultat", "Com de fort vols el bot?", opts,
               "Clica una opció o prem 1 / 2 / 3 / 4   -   M = enrere")
     if s == "side":
-      a, b = ("les blanques", "les negres") if self.kind == "morris" else ("els vermells", "els grocs")
+      a, b = SIDE_DESC[self.kind]
       return ("Qui comença?", "El primer jugador comença la partida", [
           ("first", "COMENCES TU", f"Tu portes {a}", True),
           ("second", "COMENÇA L'ORDINADOR", f"Tu portes {b}", True),
@@ -2073,6 +3232,35 @@ class App:
       SAVE["rules"] = self.rules.to_dict()
       write_save()
 
+  # ---------- escacs / go ----------
+  def chess_flip(self):
+    """Si portes negres contra el bot, el tauler es gira."""
+    return self.kind == "chess" and self.mode == "bot" and self.me == "B"
+
+  def board_click(self, target):
+    g = self.game
+    if target is None or self.result:
+      return
+    if self.mode == "bot" and g.turn != self.me:
+      return
+    role = g.turn if self.mode == "local" else self.me
+    if g.handle_click(target, role):
+      self.hint = None
+
+  def can_pass(self):
+    g = self.game
+    if g.winner or self.result:
+      return False
+    return self.mode == "local" or g.turn == self.me
+
+  def go_pass(self):
+    if not self.can_pass():
+      return
+    g = self.game
+    role = g.turn if self.mode == "local" else self.me
+    if g.pass_move(role):
+      self.hint = None
+
   # ---------- botiga ----------
   def process_shop(self, events):
     for ev in events:
@@ -2119,12 +3307,16 @@ class App:
 
   # ---------- inici / final de partida ----------
   def start_game(self):
-    firsts = (FIRST[self.kind], 2 if self.kind == "c4" else "B")
+    firsts = (FIRST[self.kind], SECOND[self.kind])
     if self.kind == "morris":
       rules = Rules() if self.mode == "online" else self.rules
       self.game = Morris(rules, track=(self.mode != "online"))
-    else:
+    elif self.kind == "c4":
       self.game = Connect4()
+    elif self.kind == "chess":
+      self.game = Chess()
+    else:
+      self.game = Go()
 
     # seguretat: sense 2000 punts no es pot jugar l'impossible
     if self.mode == "bot" and is_locked(self.difficulty):
@@ -2135,7 +3327,7 @@ class App:
       self.me = firsts[0] if self.human_first else firsts[1]
       self.bot_role = firsts[1] if self.human_first else firsts[0]
       params = BOT_PARAMS[self.kind][self.difficulty]
-      self.bot = Bot(**params) if self.kind == "morris" else C4Bot(**params)
+      self.bot = make_bot(self.kind, params)
     elif self.mode == "online":
       start_online_engine()
       self.me = detect_online_role()
@@ -2206,7 +3398,7 @@ class App:
           pts = max(1, pts // 2)
         rec[2] += 1
         res["title"], res["color"] = "TAULES", COLOR_DRAW
-        lines.append("Posició repetida o massa moviments" if kind == "morris" else "Tauler ple")
+        lines.append(draw_text_for(g, kind))
         lines.append(f"+{pts} punts")
       else:
         pts = 0
@@ -2228,7 +3420,7 @@ class App:
       if draw:
         rec[2] += 1
         res["title"] = "TAULES"
-        lines.append("Posició repetida o massa moviments" if kind == "morris" else "Tauler ple")
+        lines.append(draw_text_for(g, kind))
       else:
         rec[0 if winner == FIRST[kind] else 1] += 1
         res["title"], res["color"] = f"GUANYEN {side_label(kind, winner)}!", COLOR_WIN
@@ -2241,6 +3433,8 @@ class App:
       else:
         res["title"], res["color"] = "HAS PERDUT...", COLOR_LOSE
 
+    if kind == "go" and g.score_text:
+      lines.insert(0, g.score_text)
     self.result = res
     write_save()
 
@@ -2274,6 +3468,8 @@ class App:
       self.do_undo()
     elif key == "hint":
       self.do_hint()
+    elif key == "pass":
+      self.go_pass()
 
   def do_undo(self):
     g = self.game
@@ -2309,10 +3505,12 @@ class App:
     if self.hint is not None or SAVE["points"] < hint_cost(self):
       return
     # la pista usa el bot més fort: sempre és la millor jugada que sap trobar
-    if self.kind == "morris":
-      self.hint = Bot(**HINT_PARAMS["morris"]).choose(g, g.turn)
-    else:
-      self.hint = C4Bot(**HINT_PARAMS["c4"]).choose(g, g.turn)
+    h = make_bot(self.kind, HINT_PARAMS[self.kind]).choose(g, g.turn)
+    if self.kind == "go" and h is None:
+      h = -1                                # la millor jugada és passar
+    if h is None:
+      return
+    self.hint = h
     SAVE["points"] -= hint_cost(self)       # la pista costa punts
     self.assisted = True
     self.hinted = True
@@ -2354,6 +3552,8 @@ class App:
           self.do_undo()
         elif k == pygame.K_h:
           self.do_hint()
+        elif k == pygame.K_p and self.kind == "go":
+          self.go_pass()
         elif self.kind == "c4" and not self.result:
           for i, ks in enumerate(C4_KEYS):
             if k in ks:
@@ -2395,9 +3595,13 @@ class App:
               push_firebase_state(g.to_dict())
           if ok:
             self.hint = None
-        else:
+        elif self.kind == "c4":
           if 90 <= ev.pos[1] <= C4_Y0 + C4_ROWS * C4_CELL + 20:
             self.c4_click(c4_col_at(ev.pos[0]))
+        elif self.kind == "chess":
+          self.board_click(chess_sq_at(ev.pos, self.chess_flip()))
+        else:
+          self.board_click(go_point_at(ev.pos))
 
   # ---------- actualització ----------
   def sync_anim(self):
@@ -2407,6 +3611,8 @@ class App:
       return
     self.anim_key = key
     self.anim = None
+    if self.kind in ("chess", "go"):
+      return                      # sense animació en aquests jocs
     lm = g.last_move
     if not lm:
       return
@@ -2464,10 +3670,8 @@ class App:
   # ---------- dibuix ----------
   def draw(self):
     if self.state == "play":
-      if self.kind == "morris":
-        draw_morris(self)
-      else:
-        draw_c4(self)
+      {"morris": draw_morris, "c4": draw_c4,
+       "chess": draw_chess, "go": draw_go}[self.kind](self)
       if self.result:
         draw_result(self)
     elif self.state == "shop":
