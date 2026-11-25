@@ -42,6 +42,10 @@ POINTS = {"easy": 10, "medium": 30, "hard": 100, "impossible": 300}
 # Punts totals necessaris per poder jugar el nivell IMPOSSIBLE.
 UNLOCK_POINTS = 2000
 
+# Punts que costa demanar una pista (com més fort és el bot, més cara).
+# Si uses una pista, la victòria només dona 1 punt.
+HINT_COST = {"easy": 5, "medium": 15, "hard": 50, "impossible": 150, "local": 5}
+
 LEVELS = ("easy", "medium", "hard", "impossible")
 LEVEL_INFO = {
     "easy": ("FÀCIL", "Es despista sovint"),
@@ -1332,6 +1336,11 @@ def record_text(app):
   return ""
 
 
+def hint_cost(app):
+  """Punts que costa una pista: depèn del nivell del bot (o local)."""
+  return HINT_COST[app.difficulty if app.mode == "bot" else "local"]
+
+
 def draw_hud(app):
   pts = SMALL.render(f"Punts: {SAVE['points']}", True, SOFT_TEXT)
   SCREEN.blit(pts, (20, 20))
@@ -1407,7 +1416,8 @@ def draw_footer(app):
   info = FONT.render(status_text(app), True, TEXT_COLOR)
   SCREEN.blit(info, (WIDTH // 2 - info.get_width() // 2, HEIGHT - 82))
   rects, labels = game_buttons(app)
-  names = {"restart": "Reiniciar", "menu": "Menú", "undo": "Desfer", "hint": "Pista"}
+  names = {"restart": "Reiniciar", "menu": "Menú", "undo": "Desfer",
+           "hint": f"Pista (-{hint_cost(app)})" if app.mode != "online" else "Pista"}
   for (rect, key, en) in rects:
     draw_button(rect, names[key], en)
 
@@ -1726,7 +1736,8 @@ class App:
     self.bot_role = None
     self.bot_due = None
     self.hint = None
-    self.assisted = False
+    self.assisted = False      # ha usat desfer o pista
+    self.hinted = False        # ha usat alguna pista
     self.result = None
     self.over_time = None
     self.anim = None
@@ -1862,6 +1873,7 @@ class App:
       self.me = detect_online_role()
     self.reset_view()
     self.assisted = False
+    self.hinted = False
     self.state = "play"
 
   def reset_view(self):
@@ -1884,6 +1896,7 @@ class App:
       push_firebase_state(self.game.to_dict())
       self.reset_view()
       self.assisted = False
+      self.hinted = False
     else:
       self.start_game()
 
@@ -1902,17 +1915,26 @@ class App:
       rec = SAVE["records"][kind][self.difficulty]
       base = POINTS[self.difficulty]
       if winner == self.me:
-        pts = max(1, base // 2) if self.assisted else base
+        if self.hinted:
+          pts = 1                       # amb pista: només 1 punt
+        elif self.assisted:
+          pts = max(1, base // 2)       # amb desfer: la meitat
+        else:
+          pts = base
         rec[0] += 1
         res["title"], res["color"] = "HAS GUANYAT!", COLOR_WIN
         if blocked:
           lines.append("L'ordinador s'ha quedat sense moviments")
         lines.append(f"+{pts} punts")
-        if self.assisted:
-          lines.append("(meitat de punts per haver usat ajudes)")
+        if self.hinted:
+          lines.append("(només 1 punt per haver usat la pista)")
+        elif self.assisted:
+          lines.append("(meitat de punts per haver usat desfer)")
       elif draw:
         pts = max(1, base // 5)
-        if self.assisted:
+        if self.hinted:
+          pts = 1
+        elif self.assisted:
           pts = max(1, pts // 2)
         rec[2] += 1
         res["title"], res["color"] = "TAULES", COLOR_DRAW
@@ -1965,6 +1987,10 @@ class App:
     g = self.game
     if self.mode == "online" or g.winner or g.draw or self.result:
       return False
+    if self.hint is not None:               # ja n'hi ha una pista a la pantalla
+      return False
+    if SAVE["points"] < hint_cost(self):    # no tens prou punts
+      return False
     return self.mode != "bot" or g.turn == self.me
 
   def press(self, key):
@@ -2004,12 +2030,17 @@ class App:
       return
     if self.anim and self.anim.active():
       return
+    if self.hint is not None or SAVE["points"] < hint_cost(self):
+      return
     # la pista usa el bot més fort: sempre és la millor jugada que sap trobar
     if self.kind == "morris":
       self.hint = Bot(**HINT_PARAMS["morris"]).choose(g, g.turn)
     else:
       self.hint = C4Bot(**HINT_PARAMS["c4"]).choose(g, g.turn)
+    SAVE["points"] -= hint_cost(self)       # la pista costa punts
     self.assisted = True
+    self.hinted = True
+    write_save()
 
   # ---------- entrada ----------
   def process(self, events):
