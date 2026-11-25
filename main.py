@@ -46,6 +46,9 @@ UNLOCK_POINTS = 2000
 # Si uses una pista, la victòria només dona 1 punt.
 HINT_COST = {"easy": 5, "medium": 15, "hard": 50, "impossible": 150, "local": 5}
 
+# Desfer també costa punts, però bastant menys que una pista (aprox. 1/4).
+UNDO_COST = {"easy": 2, "medium": 5, "hard": 15, "impossible": 40, "local": 2}
+
 LEVELS = ("easy", "medium", "hard", "impossible")
 LEVEL_INFO = {
     "easy": ("FÀCIL", "Es despista sovint"),
@@ -56,8 +59,12 @@ LEVEL_INFO = {
 
 
 def is_locked(level):
-  """El nivell impossible està bloquejat fins a tenir UNLOCK_POINTS punts."""
-  return level == "impossible" and SAVE["points"] < UNLOCK_POINTS
+  """L'impossible està bloquejat fins que s'arriba a UNLOCK_POINTS punts.
+
+  Un cop desbloquejat ho queda per sempre, encara que gastis punts.
+  """
+  return (level == "impossible" and not SAVE.get("unlocked")
+          and SAVE["points"] < UNLOCK_POINTS)
 
 
 WIDTH, HEIGHT = 700, 750
@@ -148,6 +155,58 @@ TITLE_FONT = pygame.font.SysFont("arial", 28, bold=True)
 RES_FONT = pygame.font.SysFont("arial", 36, bold=True)
 BIG_FONT = pygame.font.SysFont("arial", 44, bold=True)
 
+# ---------------------------------------------------------------
+# BOTIGA: ESTILS DE TAULER I DE FITXES
+# ---------------------------------------------------------------
+
+# Taulers: color de fons, de línies i del tauler del 4 en ratlla.
+BOARD_THEMES = {
+    "classic": dict(name="Clàssic", price=0, bg=(240, 217, 181),
+                    line=(75, 54, 33), c4=(30, 80, 170), c4dark=(18, 50, 120)),
+    "forest": dict(name="Bosc", price=250, bg=(206, 226, 188),
+                   line=(44, 74, 40), c4=(34, 120, 80), c4dark=(20, 80, 52)),
+    "ocean": dict(name="Oceà", price=400, bg=(190, 224, 238),
+                  line=(22, 62, 102), c4=(0, 125, 160), c4dark=(0, 84, 110)),
+    "cherry": dict(name="Cirera", price=600, bg=(246, 208, 214),
+                   line=(110, 30, 50), c4=(170, 40, 80), c4dark=(110, 20, 52)),
+    "lavender": dict(name="Lavanda", price=800, bg=(222, 212, 242),
+                     line=(62, 42, 110), c4=(100, 70, 170), c4dark=(62, 42, 120)),
+}
+
+# Fitxes: w/b = Tres en ratlla (blanques/negres), c1/c2 = 4 en ratlla.
+# Cada color és (farciment, vora). deco: 0 llisa, 1 anell, 2 gemma.
+PIECE_STYLES = {
+    "classic": dict(name="Clàssiques", price=0, deco=0,
+                    w=((240, 240, 240), (100, 100, 100)),
+                    b=((40, 40, 40), (0, 0, 0)),
+                    c1=((215, 50, 50), (140, 20, 20)),
+                    c2=((245, 200, 40), (170, 130, 10))),
+    "wood": dict(name="Fusta", price=200, deco=1,
+                 w=((236, 206, 150), (150, 110, 60)),
+                 b=((112, 70, 36), (60, 36, 16)),
+                 c1=((196, 120, 60), (110, 60, 25)),
+                 c2=((240, 214, 160), (150, 110, 60))),
+    "gem": dict(name="Gemmes", price=400, deco=2,
+                w=((90, 200, 235), (30, 110, 150)),
+                b=((225, 60, 110), (130, 20, 60)),
+                c1=((225, 60, 110), (130, 20, 60)),
+                c2=((90, 200, 235), (30, 110, 150))),
+    "gold": dict(name="Or i plata", price=700, deco=1,
+                 w=((245, 205, 80), (160, 120, 10)),
+                 b=((185, 190, 200), (90, 95, 105)),
+                 c1=((245, 205, 80), (160, 120, 10)),
+                 c2=((185, 190, 200), (90, 95, 105))),
+    "neon": dict(name="Neó", price=1000, deco=2,
+                 w=((90, 255, 170), (0, 140, 80)),
+                 b=((200, 90, 255), (100, 20, 150)),
+                 c1=((200, 90, 255), (100, 20, 150)),
+                 c2=((90, 255, 170), (0, 140, 80))),
+}
+
+
+def _lighter(c):
+  return tuple(min(255, v + 70) for v in c)
+
 
 # ---------------------------------------------------------------
 # DESAT (localStorage al navegador, fitxer a l'ordinador)
@@ -163,6 +222,9 @@ def default_save():
       "points": 0,
       "difficulty": "hard",
       "rules": {"pieces": 7, "fly": True, "diag": False},
+      "unlocked": False,
+      "owned": {"boards": ["classic"], "pieces": ["classic"]},
+      "equipped": {"boards": "classic", "pieces": "classic"},
       "records": {
           g: {k: [0, 0, 0] for k in LEVELS + ("local",)} for g in GAMES
       },
@@ -191,10 +253,26 @@ def load_save():
           rec = loaded.get("records", {}).get(g, {}).get(k)
           if isinstance(rec, list) and len(rec) == 3:
             data["records"][g][k] = [int(x) for x in rec]
+      tables = (("boards", BOARD_THEMES), ("pieces", PIECE_STYLES))
+      owned = loaded.get("owned")
+      if isinstance(owned, dict):
+        for k, table in tables:
+          lst = owned.get(k)
+          if isinstance(lst, list):
+            data["owned"][k] = ["classic"] + [
+                x for x in dict.fromkeys(lst) if x in table and x != "classic"]
+      eq = loaded.get("equipped")
+      if isinstance(eq, dict):
+        for k, table in tables:
+          if eq.get(k) in table and eq[k] in data["owned"][k]:
+            data["equipped"][k] = eq[k]
+      data["unlocked"] = bool(loaded.get("unlocked", False))
   except Exception:
     pass
+  if data["points"] >= UNLOCK_POINTS:
+    data["unlocked"] = True
   # si el nivell desat és l'impossible però encara està bloquejat, torna al difícil
-  if data["difficulty"] == "impossible" and data["points"] < UNLOCK_POINTS:
+  if data["difficulty"] == "impossible" and not data["unlocked"]:
     data["difficulty"] = "hard"
   return data
 
@@ -1341,6 +1419,11 @@ def hint_cost(app):
   return HINT_COST[app.difficulty if app.mode == "bot" else "local"]
 
 
+def undo_cost(app):
+  """Punts que costa desfer una jugada (menys que una pista)."""
+  return UNDO_COST[app.difficulty if app.mode == "bot" else "local"]
+
+
 def draw_hud(app):
   pts = SMALL.render(f"Punts: {SAVE['points']}", True, SOFT_TEXT)
   SCREEN.blit(pts, (20, 20))
@@ -1416,8 +1499,10 @@ def draw_footer(app):
   info = FONT.render(status_text(app), True, TEXT_COLOR)
   SCREEN.blit(info, (WIDTH // 2 - info.get_width() // 2, HEIGHT - 82))
   rects, labels = game_buttons(app)
-  names = {"restart": "Reiniciar", "menu": "Menú", "undo": "Desfer",
-           "hint": f"Pista (-{hint_cost(app)})" if app.mode != "online" else "Pista"}
+  online = app.mode == "online"
+  names = {"restart": "Reiniciar", "menu": "Menú",
+           "undo": "Desfer" if online else f"Desfer (-{undo_cost(app)})",
+           "hint": "Pista" if online else f"Pista (-{hint_cost(app)})"}
   for (rect, key, en) in rects:
     draw_button(rect, names[key], en)
 
@@ -1431,14 +1516,30 @@ def back_button_rect():
 # ---------------------------------------------------------------
 
 
-def draw_piece(owner, pos, r=18):
+def current_style():
+  return PIECE_STYLES[SAVE["equipped"]["pieces"]]
+
+
+def draw_disc(pos, fill, border, deco, r):
+  """Fitxa rodona amb l'estil escollit (llisa, amb anell o amb gemma)."""
   pos = (int(pos[0]), int(pos[1]))
+  pygame.draw.circle(SCREEN, fill, pos, r)
+  pygame.draw.circle(SCREEN, border, pos, r, 2)
+  if deco == 1:
+    pygame.draw.circle(SCREEN, border, pos, max(2, int(r * 0.62)), 2)
+  elif deco == 2:
+    pygame.draw.circle(SCREEN, _lighter(fill), pos, max(2, int(r * 0.38)))
+
+
+def draw_piece(owner, pos, r=18):
+  st = current_style()
   if owner == "W":
-    pygame.draw.circle(SCREEN, WHITE_PIECE, pos, r)
-    pygame.draw.circle(SCREEN, WHITE_BORDER, pos, r, 2)
+    fill, border = st["w"]
   elif owner == "B":
-    pygame.draw.circle(SCREEN, BLACK_PIECE, pos, r)
-    pygame.draw.circle(SCREEN, BLACK_BORDER, pos, r, 2)
+    fill, border = st["b"]
+  else:
+    return
+  draw_disc(pos, fill, border, st["deco"], r)
 
 
 def draw_turn_indicator(color_fill, color_border):
@@ -1466,10 +1567,8 @@ def draw_morris(app):
     role = f"Ets les: {'BLANQUES' if app.me == 'W' else 'NEGRES'}"
   SCREEN.blit(FONT.render(role, True, (0, 100, 200)), (20, 60))
 
-  if g.turn == "W":
-    draw_turn_indicator(WHITE_PIECE, WHITE_BORDER)
-  else:
-    draw_turn_indicator(BLACK_PIECE, BLACK_BORDER)
+  st = current_style()
+  draw_turn_indicator(*(st["w"] if g.turn == "W" else st["b"]))
 
   counts = FONT.render(
       f"Per col·locar:  Blanques {g.unplaced['W']}   Negres {g.unplaced['B']}",
@@ -1567,6 +1666,15 @@ C4_Y0 = 150
 _C4_SURF = []
 
 
+def apply_theme():
+  """Aplica el tauler escollit a la botiga (colors de fons, línies i 4 en ratlla)."""
+  global BG_COLOR, LINE_COLOR, BOARD_BLUE, BOARD_DARK
+  t = BOARD_THEMES[SAVE["equipped"]["boards"]]
+  BG_COLOR, LINE_COLOR = t["bg"], t["line"]
+  BOARD_BLUE, BOARD_DARK = t["c4"], t["c4dark"]
+  _C4_SURF.clear()                 # el tauler del 4 en ratlla es torna a dibuixar
+
+
 def c4_board_surface():
   if not _C4_SURF:
     w, h = C4_COLS * C4_CELL, C4_ROWS * C4_CELL
@@ -1591,11 +1699,14 @@ def c4_col_at(x):
 
 
 def draw_c4_piece(owner, pos, r=32):
-  fill, border = C4_COLORS[owner]
+  st = current_style()
+  fill, border = st["c%d" % owner]
   pos = (int(pos[0]), int(pos[1]))
   pygame.draw.circle(SCREEN, fill, pos, r)
   pygame.draw.circle(SCREEN, border, pos, r, 3)
   pygame.draw.circle(SCREEN, border, pos, r - 10, 2)
+  if st["deco"] == 2:
+    pygame.draw.circle(SCREEN, _lighter(fill), pos, max(2, r // 4))
 
 
 def draw_c4(app):
@@ -1612,7 +1723,7 @@ def draw_c4(app):
     me = "VERMELLS" if app.me == 1 else "GROCS"
     role = f"Tu: {me}  -  Bot {LEVEL_INFO[app.difficulty][0].capitalize()}"
   SCREEN.blit(FONT.render(role, True, (0, 100, 200)), (20, 60))
-  draw_turn_indicator(*C4_COLORS[g.turn])
+  draw_turn_indicator(*current_style()["c%d" % g.turn])
 
   anim = app.anim if (app.anim and app.anim.active()) else None
 
@@ -1712,6 +1823,112 @@ def draw_result(app):
 # ---------------------------------------------------------------
 
 
+# ---------------------------------------------------------------
+# BOTIGA (pantalla)
+# ---------------------------------------------------------------
+
+SHOP_TABS = (("boards", "Taulers"), ("pieces", "Fitxes"))
+
+
+def shop_table(tab):
+  return BOARD_THEMES if tab == "boards" else PIECE_STYLES
+
+
+def shop_tab_rects():
+  return [(pygame.Rect(WIDTH // 2 - 215 + i * 230, 100, 200, 44), key, label)
+          for i, (key, label) in enumerate(SHOP_TABS)]
+
+
+def shop_cards(tab):
+  cards = []
+  for i, key in enumerate(shop_table(tab)):
+    col, row = i % 3, i // 3
+    cards.append((pygame.Rect(35 + col * 215, 170 + row * 205, 200, 190), key))
+  return cards
+
+
+def draw_item_preview(tab, key, area):
+  if tab == "boards":
+    t = BOARD_THEMES[key]
+    pygame.draw.rect(SCREEN, t["bg"], area, border_radius=8)
+    cx, cy = area.x + 52, area.centery
+    for half in (34, 23, 12):
+      pygame.draw.rect(
+          SCREEN, t["line"], (cx - half, cy - half, half * 2, half * 2), 3)
+    bx, by = area.x + 104, area.centery - 26
+    pygame.draw.rect(SCREEN, t["c4"], (bx, by, 54, 52), border_radius=6)
+    for i in range(3):
+      for j in range(2):
+        pygame.draw.circle(
+            SCREEN, t["c4dark"], (bx + 11 + i * 16, by + 14 + j * 24), 6)
+  else:
+    st = PIECE_STYLES[key]
+    pygame.draw.rect(SCREEN, (240, 217, 181), area, border_radius=8)
+    for i, k in enumerate(("w", "b", "c1", "c2")):
+      fill, border = st[k]
+      draw_disc((area.x + 24 + i * 40, area.centery), fill, border, st["deco"], 15)
+
+
+def draw_shop(app):
+  SCREEN.fill(BG_COLOR)
+
+  t = BIG_FONT.render("Botiga", True, TEXT_COLOR)
+  SCREEN.blit(t, (WIDTH // 2 - t.get_width() // 2, 25))
+  pts = FONT.render(f"Punts: {SAVE['points']}", True, TEXT_COLOR)
+  SCREEN.blit(pts, (WIDTH - 20 - pts.get_width(), 30))
+
+  mouse = pygame.mouse.get_pos()
+  for rect, key, label in shop_tab_rects():
+    sel = key == app.shop_tab
+    hover = rect.collidepoint(mouse)
+    pygame.draw.rect(
+        SCREEN, (255, 240, 205) if (sel or hover) else (245, 226, 185),
+        rect, border_radius=10)
+    pygame.draw.rect(
+        SCREEN, HIGHLIGHT_COLOR if sel else LINE_COLOR, rect,
+        5 if sel else 3, border_radius=10)
+    s = FONT.render(label, True, TEXT_COLOR)
+    SCREEN.blit(s, (rect.centerx - s.get_width() // 2,
+                    rect.centery - s.get_height() // 2))
+
+  table = shop_table(app.shop_tab)
+  owned = SAVE["owned"][app.shop_tab]
+  equipped = SAVE["equipped"][app.shop_tab]
+  for rect, key in shop_cards(app.shop_tab):
+    item = table[key]
+    is_eq = key == equipped
+    has = key in owned
+    hover = rect.collidepoint(mouse)
+    pygame.draw.rect(
+        SCREEN, (255, 240, 205) if hover else (250, 232, 195), rect,
+        border_radius=14)
+    pygame.draw.rect(
+        SCREEN, HIGHLIGHT_COLOR if is_eq else LINE_COLOR, rect,
+        5 if is_eq else 3, border_radius=14)
+    draw_item_preview(
+        app.shop_tab, key, pygame.Rect(rect.x + 15, rect.y + 14, 170, 92))
+    name = FONT.render(item["name"], True, TEXT_COLOR)
+    SCREEN.blit(name, (rect.centerx - name.get_width() // 2, rect.y + 116))
+    if is_eq:
+      txt, col = "EQUIPAT", COLOR_WIN
+    elif has:
+      txt, col = "Clica per equipar", (0, 100, 200)
+    elif SAVE["points"] >= item["price"]:
+      txt, col = f"{item['price']} punts", TEXT_COLOR
+    else:
+      txt, col = f"{item['price']} punts", COLOR_LOSE
+    s = SMALL.render(txt, True, col)
+    SCREEN.blit(s, (rect.centerx - s.get_width() // 2, rect.y + 150))
+
+  if app.shop_msg and time.time() - app.shop_msg[2] < 2.5:
+    m = FONT.render(app.shop_msg[0], True, app.shop_msg[1])
+    SCREEN.blit(m, (WIDTH // 2 - m.get_width() // 2, 600))
+
+  h = FONT.render("Clica un element per comprar-lo o equipar-lo", True, SOFT_TEXT)
+  SCREEN.blit(h, (WIDTH // 2 - h.get_width() // 2, HEIGHT - 60))
+  draw_button(back_button_rect(), "< Enrere")
+
+
 def point_at(mouse_pos):
   mx, my = mouse_pos
   for point, pos in POINT_POSITIONS.items():
@@ -1742,6 +1959,9 @@ class App:
     self.over_time = None
     self.anim = None
     self.anim_key = None
+    self.shop_tab = "boards"   # boards | pieces
+    self.shop_msg = None       # (text, color, instant)
+    apply_theme()
 
   # ---------- menús ----------
   def menu_def(self):
@@ -1750,8 +1970,9 @@ class App:
       return ("Jocs de taula", f"Punts totals: {SAVE['points']}", [
           ("morris", "TRES EN RATLLA", "Tauler de tres quadrats", True),
           ("c4", "4 EN RATLLA", "Fitxes que cauen", True),
+          ("shop", "BOTIGA", "Taulers i fitxes a canvi de punts", True),
           ("settings", "REGLES", "Variants de Tres en ratlla", True),
-      ], "Clica una opció o prem 1 / 2 / 3")
+      ], "Clica una opció o prem 1 / 2 / 3 / 4")
     if s == "modes":
       online_ok = self.kind == "morris" and HAS_JS
       if self.kind != "morris":
@@ -1808,6 +2029,9 @@ class App:
       if pick in GAMES:
         self.kind = pick
         self.state = "modes"
+      elif pick == "shop":
+        self.state = "shop"
+        self.shop_msg = None
       elif pick == "settings":
         self.state = "settings"
     elif s == "modes":
@@ -1848,6 +2072,50 @@ class App:
         self.rules.diag = not self.rules.diag
       SAVE["rules"] = self.rules.to_dict()
       write_save()
+
+  # ---------- botiga ----------
+  def process_shop(self, events):
+    for ev in events:
+      if ev.type == pygame.QUIT:
+        self.running = False
+        return
+      if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_m):
+        self.state = "main"
+        return
+      if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+        if back_button_rect().collidepoint(ev.pos):
+          self.state = "main"
+          return
+        for rect, key, _label in shop_tab_rects():
+          if rect.collidepoint(ev.pos):
+            self.shop_tab = key
+            self.shop_msg = None
+            return
+        for rect, key in shop_cards(self.shop_tab):
+          if rect.collidepoint(ev.pos):
+            self.shop_pick(key)
+            return
+
+  def shop_pick(self, key):
+    """Equipa un element si ja el tens; si no, el compra (si tens punts)."""
+    tab = self.shop_tab
+    item = shop_table(tab)[key]
+    owned = SAVE["owned"][tab]
+    if key in owned:
+      msg = ("Equipat!", COLOR_WIN)
+    elif SAVE["points"] >= item["price"]:
+      SAVE["points"] -= item["price"]
+      owned.append(key)
+      msg = (f"Comprat: {item['name']}!", COLOR_WIN)
+    else:
+      self.shop_msg = (
+          f"Et falten {item['price'] - SAVE['points']} punts", COLOR_LOSE,
+          time.time())
+      return
+    SAVE["equipped"][tab] = key
+    apply_theme()
+    write_save()
+    self.shop_msg = (msg[0], msg[1], time.time())
 
   # ---------- inici / final de partida ----------
   def start_game(self):
@@ -1947,10 +2215,12 @@ class App:
         if blocked:
           lines.append("T'has quedat sense moviments")
         lines.append("Torna-ho a provar!")
-      before = SAVE["points"]
+      was_locked = is_locked("impossible")
       SAVE["points"] += pts
+      if SAVE["points"] >= UNLOCK_POINTS:
+        SAVE["unlocked"] = True              # ja queda desbloquejat per sempre
       lines.append(f"Total: {SAVE['points']} punts")
-      if before < UNLOCK_POINTS <= SAVE["points"]:
+      if was_locked and SAVE["unlocked"]:
         lines.append("Has desbloquejat el nivell IMPOSSIBLE!")
 
     elif mode == "local":
@@ -1978,6 +2248,8 @@ class App:
   def can_undo(self):
     g = self.game
     if self.mode == "online" or g.winner or g.draw or self.result:
+      return False
+    if SAVE["points"] < undo_cost(self):    # no tens prou punts
       return False
     if self.mode == "local":
       return bool(g.stack)
@@ -2007,6 +2279,8 @@ class App:
     g = self.game
     if self.mode == "online" or g.winner or g.draw or self.result:
       return
+    if SAVE["points"] < undo_cost(self):
+      return
     changed = False
     if self.mode == "local":
       changed = g.undo_one()
@@ -2017,10 +2291,12 @@ class App:
         if g.turn == self.me:
           break
     if changed:
+      SAVE["points"] -= undo_cost(self)  # desfer costa punts
       self.assisted = True
       self.hint = None
       self.bot_due = None
       self.reset_anim()
+      write_save()
 
   def do_hint(self):
     g = self.game
@@ -2048,10 +2324,12 @@ class App:
       if ev.type == pygame.QUIT:
         self.running = False
         return
-    if self.state != "play":
-      self.process_menu(events)
-    else:
+    if self.state == "play":
       self.process_play(events)
+    elif self.state == "shop":
+      self.process_shop(events)
+    else:
+      self.process_menu(events)
 
   def c4_click(self, col):
     g = self.game
@@ -2192,6 +2470,8 @@ class App:
         draw_c4(self)
       if self.result:
         draw_result(self)
+    elif self.state == "shop":
+      draw_shop(self)
     else:
       title, sub, opts, hint = self.menu_def()
       draw_choice_menu(title, sub, opts, pygame.mouse.get_pos(), hint)
