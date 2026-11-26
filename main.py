@@ -5126,15 +5126,80 @@ MENU_NAMES.update(shogi='Shogi',saves='Partides',achievements='Assoliments',dino
 LEVEL_INFO['impossible']=('IMPOSSIBLE','El nivell més exigent')
 SH_X,SH_Y,SH_CELL=107,105,54
 
+def _shogi_icon_surface(kind, size, promoted=False):
+  surf = pygame.Surface((size, size), pygame.SRCALPHA)
+  c = (74, 42, 18)
+  hi = (150, 35, 35)
+  ink = hi if promoted else c
+  cx = cy = size // 2
+  s = max(1, size // 14)
+
+  def poly(pts, fill=False):
+    pts = [(cx + int(px * s), cy + int(py * s)) for px, py in pts]
+    pygame.draw.polygon(surf, ink, pts, 0 if fill else 2)
+
+  def line(a, b, w=2):
+    pygame.draw.line(surf, ink, (cx + int(a[0] * s), cy + int(a[1] * s)),
+                     (cx + int(b[0] * s), cy + int(b[1] * s)), max(1, w))
+
+  def rect(x, y, w, h, width=0, br=0):
+    pygame.draw.rect(surf, ink, pygame.Rect(cx + int(x * s), cy + int(y * s), int(w * s), int(h * s)), width, border_radius=br)
+
+  def circle(x, y, r, width=0):
+    pygame.draw.circle(surf, ink, (cx + int(x * s), cy + int(y * s)), max(1, int(r * s)), width)
+
+  base = SH_BASE.get(kind, kind)
+  if base == 1:  # peó
+    line((0, -5), (0, 5), 3)
+    poly([(-2, -1), (0, -6), (2, -1)], fill=True)
+    rect(-3, 4, 6, 2, 0, 2)
+  elif base == 2:  # llança
+    line((0, -6), (0, 5), 3)
+    poly([(-2, -2), (0, -7), (2, -2)], fill=True)
+    rect(-3, 5, 6, 2, 0, 2)
+  elif base == 3:  # cavall
+    poly([(-4, 5), (-4, -2), (-1, -6), (3, -4), (1, -1), (4, 2), (2, 5)], False)
+    circle(2, -4, 0.7, 0)
+    line((-2, 5), (0, 2), 2); line((1, 5), (3, 2), 2)
+  elif base == 4:  # plata
+    poly([(0, -6), (2, -1), (6, -1), (3, 2), (4, 6), (0, 4), (-4, 6), (-3, 2), (-6, -1), (-2, -1)], False)
+  elif base == 5:  # or
+    poly([(0, -6), (5, -2), (3, 4), (0, 6), (-3, 4), (-5, -2)], False)
+    line((-2, 0), (2, 0), 2)
+  elif base == 6:  # alfil
+    line((-5, -5), (5, 5), 2); line((-5, 5), (5, -5), 2)
+    circle(0, 0, 3.2, 2)
+    circle(0, 0, 1.1, 0)
+  elif base == 7:  # torre
+    rect(-4, 1, 8, 5, 2, 1)
+    rect(-2, -4, 4, 5, 2, 1)
+    rect(-5, -6, 10, 2, 0, 1)
+    for dx in (-5, -1, 3):
+      rect(dx, -8, 2, 3, 0, 1)
+    rect(-6, 6, 12, 2, 0, 1)
+  elif base == 8:  # rei
+    line((0, -6), (0, 4), 2); line((-4, -2), (4, -2), 2)
+    poly([(-5, 4), (5, 4), (3, 7), (-3, 7)], False)
+    circle(-2, -5, 1.0, 0); circle(2, -5, 1.0, 0)
+  if promoted:
+    circle(5, -5, 2.1, 0)
+    line((3.8, -5), (6.2, -5), 2)
+    line((5, -6.2), (5, -3.8), 2)
+  return surf
+
+
 def shogi_piece(p,rect,small=False):
   x,y=rect.center; w=rect.width//2-3; h=rect.height//2-3
   sign=1 if p>0 else -1
   pts=[(x,y-sign*h),(x+w,y-sign*(h//2)),(x+w-3,y+sign*h),(x-w+3,y+sign*h),(x-w,y-sign*(h//2))]
   pygame.draw.polygon(SCREEN,(250,218,149) if p>0 else (211,162,96),pts)
   pygame.draw.polygon(SCREEN,(100,62,30),pts,2)
-  text=(SMALL if small else FONT).render(SH_NAMES[abs(p)],True,(150,35,35) if abs(p)>=9 else (40,28,18))
-  if p<0: text=pygame.transform.rotate(text,180)
-  SCREEN.blit(text,text.get_rect(center=(x,y)))
+  promoted = abs(p) >= 9
+  icon_size = max(14, min(rect.width, rect.height) - (16 if small else 12))
+  icon = _shogi_icon_surface(abs(p), icon_size, promoted)
+  if p < 0:
+    icon = pygame.transform.rotate(icon, 180)
+  SCREEN.blit(icon, icon.get_rect(center=(x, y + (1 if small else 2))))
 
 def shogi_hand_rect(side,p): return pygame.Rect(150+(p-1)*60, 57 if side<0 else 600,54,36)
 
@@ -15833,6 +15898,9 @@ def draw_dino_icon(area):
 
 def home_cover(key, area):
   pygame.draw.rect(SCREEN, (242,223,186), area, border_radius=12)
+  if key == "shogi":
+    draw_menu_icon(key, area.inflate(-6, -6))
+    return
   if key in MENU_IMAGE_DATA:
     ck = (key, area.size)
     if ck not in _MENU_IMAGE_CACHE:
@@ -15854,7 +15922,12 @@ def home_cover(key, area):
           print("Portada", key, exc)
       if image is not None:
         iw,ih=image.get_size(); aw,ah=area.size
-        f=min((aw-8)/iw,(ah-8)/ih) if key in ("c4","dino") else max(aw/iw,ah/ih)
+        if key == "c4":
+          f = min((aw - 8) / iw, (ah - 8) / ih)
+        elif key == "dino":
+          f = min((aw - 4) / iw, (ah - 4) / ih) * 1.45
+        else:
+          f = max(aw / iw, ah / ih)
         w,h=max(1,round(iw*f)),max(1,round(ih*f))
         tile=pygame.Surface(area.size,pygame.SRCALPHA)
         tile.blit(pygame.transform.smoothscale(image,(w,h)),((aw-w)//2,(ah-h)//2))
