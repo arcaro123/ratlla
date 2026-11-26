@@ -16903,6 +16903,23 @@ def dino_ui_button(rect,label,accent=False):
   pygame.draw.rect(SCREEN,col,rect,border_radius=12)
   dino_text(label,rect.center,FONT if accent else SMALL,(31,47,41) if accent else (241,244,230))
 
+
+def dino_center_alert(title,subtitle,timer):
+  pulse=(math.sin(pygame.time.get_ticks()*.012)+1)*.5
+  box=pygame.Rect(170,214,360,106)
+  panel=pygame.Surface((box.w,box.h),pygame.SRCALPHA)
+  pygame.draw.rect(panel,(22,32,35,224),panel.get_rect(),border_radius=18)
+  pygame.draw.rect(panel,(235,188,98),panel.get_rect(),3,border_radius=18)
+  glow=pygame.Surface((box.w+40,box.h+40),pygame.SRCALPHA)
+  pygame.draw.ellipse(glow,(243,173,78,35+round(35*pulse)),glow.get_rect())
+  SCREEN.blit(glow,glow.get_rect(center=box.center))
+  SCREEN.blit(panel,box)
+  dino_text(title,(box.centerx,box.y+34),TITLE_FONT,(255,224,145))
+  dino_text(subtitle,(box.centerx,box.y+73),FONT,(240,241,225))
+  w=max(0,min(300,int(300*timer/55)))
+  pygame.draw.rect(SCREEN,(62,80,72),(box.x+30,box.bottom-20,300,8),border_radius=4)
+  pygame.draw.rect(SCREEN,(235,188,98),(box.x+30,box.bottom-20,w,8),border_radius=4)
+
 def draw_dino(app):
   g=app.game; draw_background('dino'); stage=dino_landscape(g)
   if not g.started and not g.paused and not g.winner:
@@ -16942,9 +16959,10 @@ def draw_dino(app):
     pygame.draw.rect(SCREEN,(28,45,43),(155,99,390,31),border_radius=9)
     dino_text(' · '.join(active),(350,114))
   if g.warning:
-    pygame.draw.rect(SCREEN,(101,62,31),(18,155,240,40),border_radius=12); dino_text('! Ve un obstacle per l’esquerra',(138,175),SMALL,(255,230,165))
-  if g.notice_timer:
-    pygame.draw.rect(SCREEN,(28,45,43),(170,138,360,32),border_radius=9); dino_text(g.notice,(350,154),SMALL,(248,221,137))
+    dino_center_alert("PROJECTIL!", "Prepara't per saltar", g.warning)
+  elif g.notice_timer:
+    pygame.draw.rect(SCREEN,(28,45,43),(145,138,410,32),border_radius=9)
+    dino_text(g.notice,(350,154),SMALL,(248,221,137))
   pygame.draw.rect(SCREEN,(28,45,43),(0,650,WIDTH,100))
   dino_text('Toca per saltar · Torna a tocar a l’aire per fer un doble salt',(350,668),SMALL)
   labels={'menu':'Menú','restart':'Reinicia','save':'Desa','pause':'Continua' if g.paused else 'Pausa','jump':'SALTAR'}
@@ -17343,14 +17361,18 @@ def dino_draw_player(g):
   elif height>1: pose='rise' if g.vy<-2 else 'jump' if g.vy<3 else 'fall'
   elif getattr(g,'landing_anim',0)>0: pose='land'
   else: pose='run'
-  # Ombra que s'encongeix mentre el personatge puja.
   w=max(30,76-round(height*.22)); h=max(6,13-round(height*.035))
   shadow=pygame.Surface((w,h),pygame.SRCALPHA)
   pygame.draw.ellipse(shadow,(27,32,29,max(18,83-round(height*.33))),shadow.get_rect())
   SCREEN.blit(shadow,shadow.get_rect(center=(r.centerx, floor+3)))
   if not (g.invuln and g.move_count//4%2):
     stretch=2 if pose=='rise' else -5 if pose=='land' else 0
-    img=dino_animated_image(pose,phase,g.skin,(88-stretch,70+stretch))
+    size=(88-stretch,70+stretch)
+    img=dino_animated_image(pose,phase,g.skin,size)
+    # Resplendor subtil per separar millor el dino del fons.
+    glow=pygame.Surface((size[0]+10,size[1]+10),pygame.SRCALPHA)
+    pygame.draw.ellipse(glow,(255,236,170,18),glow.get_rect())
+    SCREEN.blit(glow,glow.get_rect(midbottom=(r.centerx,round(g.y)+6)))
     SCREEN.blit(img,img.get_rect(midbottom=(r.centerx,round(g.y)+2)))
   if g.shield:
     glow=pygame.Surface((100,100),pygame.SRCALPHA)
@@ -17384,6 +17406,12 @@ _dino_anim_old_hazard=dino_draw_hazard
 def dino_draw_hazard(h,g):
   if h.get('warn',0)>0: return
   r=dino_rect(h); k=h['type']; t=g.move_count
+  # Ombres lleus per integrar millor les trampes al terreny.
+  if k not in ('bird','highbird','drone','orb'):
+    sw=max(18,int(r.w*.9)); sh=max(5,int(r.h*.14))
+    shad=pygame.Surface((sw,sh),pygame.SRCALPHA)
+    pygame.draw.ellipse(shad,(30,28,23,72),shad.get_rect())
+    SCREEN.blit(shad,shad.get_rect(center=(r.centerx,r.bottom+3)))
   if k in ('tall_spire','thorn_wall'):
     dino_draw_tall(h,g)
   elif k=='upper_spike':
@@ -17450,9 +17478,22 @@ def dino_draw_hazard(h,g):
     pygame.draw.circle(SCREEN,(156,120,79),(r.right-8,r.centery),6,2)
     for xx in range(r.x+10,r.right-10,11):
       pygame.draw.line(SCREEN,(145,107,67),(xx,r.y+4),(xx+5,r.bottom-4),2)
+  elif k=='orb':
+    aura=pygame.Surface((r.w+34,r.h+34),pygame.SRCALPHA)
+    pygame.draw.circle(aura,(248,169,64,26),(aura.get_width()//2,aura.get_height()//2),r.w//2+14)
+    pygame.draw.circle(aura,(255,220,120,20),(aura.get_width()//2,aura.get_height()//2),r.w//2+8)
+    SCREEN.blit(aura,aura.get_rect(center=r.center))
+    for i in range(4):
+      trailx=r.centerx-14-i*10; rad=max(2,6-i)
+      pygame.draw.circle(SCREEN,(244,166,73,max(40,120-i*22)),(trailx,r.centery),rad)
+    pygame.draw.circle(SCREEN,(92,48,27),r.center,r.w//2+1)
+    pygame.draw.circle(SCREEN,(255,170,60),r.center,r.w//2-2)
+    pygame.draw.circle(SCREEN,(255,216,122),r.center,r.w//2-7)
+    pygame.draw.circle(SCREEN,(255,247,214),(r.centerx-3,r.centery-3),4)
+    pygame.draw.arc(SCREEN,(255,236,170),(r.x+4,r.y+4,r.w-8,r.h-8),math.pi*.15,math.pi*.9,2)
   else:
     _dino_anim_old_hazard(h,g)
-    if k in ('barrel','orb','tumble'):
+    if k in ('barrel','tumble'):
       a=t*.23
       pygame.draw.circle(SCREEN,(233,194,131),(r.centerx+round(math.cos(a)*r.w*.30),r.centery+round(math.sin(a)*r.h*.30)),2)
     elif k=='crystal':
@@ -17480,7 +17521,22 @@ def dino_landscape(g):
   name=_dino_anim_old_landscape(g)
   if SAVE['backgrounds'].get('dino','auto')!='auto': return name
   _,top,bottom,far,near,sand,ink=dino_stage(g)
-  # Petits elements de primer pla amb paral·laxi; sense obstacles nous.
+  # Resplendor del sol/lluna i una boirina lleu per donar profunditat.
+  if name!='Nit estrellada':
+    glow=pygame.Surface((220,220),pygame.SRCALPHA)
+    pygame.draw.circle(glow,(255,232,154,34),(110,110),92)
+    pygame.draw.circle(glow,(255,244,201,18),(110,110),58)
+    SCREEN.blit(glow,(456,64))
+  else:
+    moon=pygame.Surface((150,150),pygame.SRCALPHA)
+    pygame.draw.circle(moon,(226,233,243,30),(75,75),52)
+    pygame.draw.circle(moon,(239,244,252,18),(75,75),34)
+    SCREEN.blit(moon,(500,78))
+  haze=pygame.Surface((WIDTH,190),pygame.SRCALPHA)
+  for y in range(0,190,6):
+    alpha=max(0,28-y//8)
+    pygame.draw.line(haze,(*dino_mix(bottom,(255,255,255),.55),alpha),(0,y),(WIDTH,y))
+  SCREEN.blit(haze,(0,250))
   for i in range(14):
     x=round((i*73-g.distance*1.07)%1022)-30; y=g.ground+48+i%4*13
     c=dino_mix(sand,ink,.38)
@@ -17488,6 +17544,26 @@ def dino_landscape(g):
     else:
       lean=round(3*math.sin(g.move_count*.07+i))
       pygame.draw.lines(SCREEN,c,False,[(x-4,y-7),(x,y),(x+lean,y-12)],2)
+  if name=='Sabana':
+    for i in range(8):
+      x=int((i*121-g.distance*.52)%940)-40; y=528-(i%2)*7
+      pygame.draw.line(SCREEN,(138,116,59),(x,y),(x+4,y-16),2)
+      pygame.draw.line(SCREEN,(138,116,59),(x+4,y-16),(x+12,y-10),2)
+      pygame.draw.line(SCREEN,(138,116,59),(x+4,y-16),(x-5,y-9),2)
+  elif name=='Selva':
+    for i in range(6):
+      x=int((i*157-g.distance*.38)%980)-50; y=470+i%2*20
+      pygame.draw.line(SCREEN,(48,86,61),(x,y),(x+8,y-70),5)
+      pygame.draw.ellipse(SCREEN,(74,131,88),(x-24,y-82,48,22))
+      pygame.draw.ellipse(SCREEN,(94,156,103),(x-8,y-98,44,20))
+  elif name=='Glacera':
+    for i in range(20):
+      x=int((i*61+g.move_count*.35)%WIDTH); y=int(165+(i*33+g.move_count*.58)%330)
+      pygame.draw.circle(SCREEN,(245,249,255),(x,y),1+i%2)
+  elif name=='Volcà':
+    for i in range(22):
+      x=int((i*83-g.distance*.25)%WIDTH); y=int(185+(i*29-g.move_count*.95)%310)
+      pygame.draw.circle(SCREEN,(255,181,94),(x,y),1+i%2)
   if name=='Nit estrellada':
     for i in range(18):
       x=(i*109+17)%WIDTH; y=150+(i*47)%155
