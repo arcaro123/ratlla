@@ -16154,17 +16154,16 @@ class DinoRun:
     choices=[k for k in choices if k!=self.last_kind] or choices
     kind=random.choice(choices); self.last_kind=kind; self.waves+=1
     w,h=DINO_HAZARDS[kind]; y=self.ground-h
-    if kind=='bird': y=self.ground-59
-    if kind=='highbird': y=self.ground-137
+    if kind=='bird': y=self.ground-37
+    if kind=='highbird': y=self.ground-150
     if kind=='orb':
       self.warning=55; x=-w-16; vx=7.5
     else:
       x=WIDTH+12; vx=-self.speed*(1.06 if kind in ('bird','jeep','highbird') else 1)
     self.hazards.append({'type':kind,'x':float(x),'y':float(y),'w':w,'h':h,'vx':vx,'warn':self.warning if kind=='orb' else 0})
-    # Una filera de monedes indica la trajectòria de salt. Els ocells baixos
-    # tenen monedes arran de terra per suggerir ajupir-se.
+    # Monedes a l'aire per suggerir el salt; a terra per als ocells alts.
     if kind!='orb':
-      yy=self.ground-(18 if kind=='bird' else 17 if kind=='highbird' else 122)
+      yy=self.ground-(17 if kind=='highbird' else 112)
       for i in range(3): self.pickups.append({'kind':'coin','x':float(WIDTH-12+i*32),'y':float(yy-(0 if kind in ('bird','highbird') else (12 if i==1 else 0)))})
     if self.waves%5==0:
       self.pickups.append({'kind':'shield' if self.waves%10==5 else 'magnet','x':float(WIDTH+155),'y':float(self.ground-30)})
@@ -16614,7 +16613,7 @@ _DINO_MODES = {'endless':('Infinit',0), 'sprint':('Sprint',60), 'expedition':('E
 _DINO_SKINS = [('Verd clàssic',0,(72,126,92)),('Ambre',200,(192,118,56)),('Glacial',500,(74,147,184)),('Obsidiana',1000,(90,81,117)),('Esmeralda',1800,(35,164,123)),('Daurat',3000,(205,164,62))]
 _DINO_TASKS = [('temps', 'Aguanta 30 segons',30),('coins','Recull 12 monedes',12),('cleared','Esquiva 8 obstacles',8)]
 DINO_HAZARDS.update(tumble=(38,38), arch=(82,36), crystal=(35,47), drone=(47,24))
-DINO_LABELS.update(tumble='Planta rodolant',arch='Arc baix',crystal='Cristall',drone='Robot volador')
+DINO_LABELS.update(tumble='Planta rodolant',arch='Barrera baixa',crystal='Cristall',drone='Robot volador')
 DINO_STAGES += (
  ('Selva',(103,173,143),(225,240,188),(81,128,99),(48,102,77),(125,158,92),(56,82,61)),
  ('Glacera',(139,183,216),(242,249,248),(129,165,190),(107,148,175),(214,230,234),(76,112,135)),
@@ -16645,6 +16644,12 @@ class DinoRun(_DinoBase):
     if version!=4:
       self.mode_id='endless'; self.bonus=0; self.tasks=[]; self.complete=False
     self.particles=[]; self.floaters=[]; self.score=self.move_count//6+self.coins*20+self.bonus
+    # Actualitza obstacles de partides antigues per poder jugar només saltant.
+    for h in self.hazards:
+      if h['type']=='bird': h['y']=self.ground-37
+      elif h['type']=='highbird': h['y']=self.ground-150
+      elif h['type']=='arch': h['y']=self.ground-h['h']
+      elif h['type']=='drone': h['y']=self.ground-40
 
   def reward(self):
     return super().reward()+len(self.tasks)*3+(10 if self.complete else 0)
@@ -16667,10 +16672,10 @@ class DinoRun(_DinoBase):
       kind=random.choice([k for k in choices if k!=self.last_kind] or choices)
       self.last_kind=kind; self.waves+=1
       w,h=DINO_HAZARDS[kind]; y=self.ground-h
-      if kind=='arch': y=self.ground-73
-      if kind=='drone': y=self.ground-61
+      if kind=='arch': y=self.ground-h
+      if kind=='drone': y=self.ground-40
       self.hazards.append({'type':kind,'x':float(WIDTH+12),'y':float(y),'w':w,'h':h,'vx':-self.speed,'warn':0})
-      for i in range(3): self.pickups.append({'kind':'coin','x':float(WIDTH-12+i*32),'y':float(self.ground-(17 if kind in ('arch','drone') else 122))})
+      for i in range(3): self.pickups.append({'kind':'coin','x':float(WIDTH-12+i*32),'y':float(self.ground-112)})
     # Bonus objects never overlap a forced jump/duck window.
     if self.waves%6==0:
       self.pickups.append({'kind':'slow' if self.waves%12==6 else 'double','x':float(WIDTH+180),'y':float(self.ground-30)})
@@ -16811,61 +16816,109 @@ def dino_draw_player(g):
     pygame.draw.circle(SCREEN,p['color'],(round(p['x']),round(p['y'])),max(1,min(4,p['life']//7)))
   for p in g.floaters: dino_text(p['text'],(round(p['x']),round(p['y'])),SMALL,p['color'])
 
-# Lobby integrated into the same play state, with no timer until start.
+# Interfície neta: el menú de selecció no mostra el HUD de la partida.
 def dino_lobby_rects():
-  return {'mode':pygame.Rect(85,288,250,48),'skin':pygame.Rect(365,288,250,48),'start':pygame.Rect(85,477,530,53)}
+  return {'mode':pygame.Rect(85,285,250,52),'skin':pygame.Rect(365,285,250,52),'start':pygame.Rect(85,461,530,64),'menu':pygame.Rect(20,20,108,42)}
 
 def dino_lobby_action(g,key):
   if key=='mode':
     modes=list(_DINO_MODES); g.mode_id=modes[(modes.index(g.mode_id)+1)%len(modes)]; dino_profile()['mode']=g.mode_id; write_save()
   elif key=='skin':
     unlocked=[i for i in range(len(_DINO_SKINS)) if dino_unlocked(i)]; g.skin=unlocked[(unlocked.index(g.skin)+1)%len(unlocked)]; dino_profile()['skin']=g.skin; write_save()
-  elif key=='start': g.jump()
+  elif key=='start': g.started=True; g.accum=0.; g.paused=False
 
-_old_draw_dino=draw_dino
+def dino_control_rects():
+  return [('menu',pygame.Rect(18,685,100,47)),('restart',pygame.Rect(130,685,108,47)),('save',pygame.Rect(250,685,90,47)),('pause',pygame.Rect(352,685,100,47)),('jump',pygame.Rect(464,685,218,47))]
+
+def dino_ui_button(rect,label,accent=False):
+  col=(238,200,112) if accent else (61,87,76)
+  if rect.collidepoint(mouse_pos()): col=dino_mix(col,(255,255,255),.14)
+  pygame.draw.rect(SCREEN,col,rect,border_radius=12)
+  dino_text(label,rect.center,FONT if accent else SMALL,(31,47,41) if accent else (241,244,230))
 
 def draw_dino(app):
-  g=app.game; _old_draw_dino(app)
-  # Compact objectives and power-up bars below the original HUD.
-  if g.started and not g.paused:
-    panel=pygame.Rect(18,220,664,65); pygame.draw.rect(SCREEN,(29,47,43),panel,border_radius=11)
-    for i,(key,label,target) in enumerate(_DINO_TASKS):
-      x=30+i*220; value=g.seconds if key=='temps' else getattr(g,key)
-      dino_text(label,(x+100,235),SMALL,(220,236,218)); pygame.draw.rect(SCREEN,(67,91,78),(x,252,198,9),border_radius=4)
-      pygame.draw.rect(SCREEN,(124,205,147) if key in g.tasks else (235,195,98),(x,252,round(198*min(1,value/target)),9),border_radius=4)
-      dino_text(f'{min(target,int(value))}/{target}',(x+100,273),SMALL)
-    limit=_DINO_MODES[g.mode_id][1]
-    status=f'{_DINO_MODES[g.mode_id][0]} · Combo {g.combo} · +{g.bonus} bonus'
-    if limit: status+=f' · {max(0,math.ceil(limit-g.seconds))} s restants'
-    pygame.draw.rect(SCREEN,(29,47,43),(18,590,664,30),border_radius=8); dino_text(status,(350,605))
-    if g.slow or g.double:
-      dino_text(('Lent '+str((g.slow+59)//60)+'s  ' if g.slow else '')+('Monedes x2 '+str((g.double+59)//60)+'s' if g.double else ''),(350,302),FONT,(247,210,112))
+  g=app.game; draw_background('dino'); stage=dino_landscape(g)
   if not g.started and not g.paused and not g.winner:
-    pygame.draw.rect(SCREEN,(24,40,38),(48,171,604,388),border_radius=22); pygame.draw.rect(SCREEN,(207,171,92),(48,171,604,388),2,border_radius=22)
-    dino_text('DINO RUN: EXPEDITION',(350,205),TITLE_FONT,(248,221,137)); dino_text('Tria el mode i el dinosaure',(350,244),FONT)
-    rects=dino_lobby_rects(); profile=dino_profile()
-    for key,txt in [('mode',_DINO_MODES[g.mode_id][0]+'  >'),('skin',_DINO_SKINS[g.skin][0]+'  >')]:
-      r=rects[key]; pygame.draw.rect(SCREEN,(62,91,76),r,border_radius=10); dino_text(txt,r.center,FONT)
-    dino_text('MODE',(210,274),SMALL); dino_text('ASPECTE',(490,274),SMALL)
-    dino_text({'endless':'Sense límit de temps','sprint':'Arriba als 60 segons','expedition':'Arriba als 120 segons'}[g.mode_id],(210,363),SMALL)
-    dino_text(f"Sprint: {profile['sprint']} · Expedició: {profile['expedition']}",(210,389),SMALL,(175,201,185))
-    preview=pygame.transform.scale(dino_skin_sprite('run',0,g.skin),(84,68)); SCREEN.blit(preview,preview.get_rect(center=(490,373)))
-    nxt=next((s for i,s in enumerate(_DINO_SKINS) if not dino_unlocked(i)),None)
-    dino_text('Següent: '+nxt[0]+' · '+str(nxt[1])+' punts' if nxt else 'Tots els aspectes desbloquejats',(350,419),SMALL,(237,203,117))
-    dino_text(f"Curses: {profile['runs']}  ·  Monedes: {profile['coins']}  ·  Millor temps: {profile['time']} s",(350,449),SMALL)
-    r=rects['start']; pygame.draw.rect(SCREEN,(236,194,105),r,border_radius=12); dino_text('COMENÇAR L’AVENTURA',r.center,FONT,(31,47,41))
-
-_old_process_dino=process_dino
+    r=pygame.Rect(48,135,604,435)
+    pygame.draw.rect(SCREEN,(24,40,38),r,border_radius=24)
+    pygame.draw.rect(SCREEN,(207,171,92),r,2,border_radius=24)
+    dino_text('DINO RUN',(350,179),BIG_FONT,(248,221,137))
+    dino_text('Expedition',(350,222),FONT,(175,201,185))
+    rects=dino_lobby_rects()
+    dino_text('MODE',(210,265),SMALL); dino_text('ASPECTE',(490,265),SMALL)
+    dino_ui_button(rects['mode'],_DINO_MODES[g.mode_id][0]+'  >')
+    dino_ui_button(rects['skin'],_DINO_SKINS[g.skin][0]+'  >')
+    dino_text({'endless':'Sense límit','sprint':'60 segons','expedition':'120 segons'}[g.mode_id],(210,362),SMALL)
+    preview=pygame.transform.scale(dino_skin_sprite('run',0,g.skin),(105,85)); SCREEN.blit(preview,preview.get_rect(center=(490,385)))
+    dino_text('Rècord: '+str(SAVE.get('dino_best',0)),(210,400),FONT,(237,203,117))
+    dino_ui_button(rects['start'],'JUGAR',True)
+    dino_ui_button(rects['menu'],'< Menú')
+    dino_text('Toca la pantalla o prem ESPAI per saltar',(350,610),FONT,(31,47,41))
+    return
+  for p in g.pickups: dino_draw_pickup(p,g)
+  for h in g.hazards: dino_draw_hazard(h,g)
+  dino_draw_player(g)
+  pygame.draw.rect(SCREEN,(28,45,43),(14,14,672,72),border_radius=16)
+  dino_text('DINO RUN',(112,36),TITLE_FONT,(248,221,137)); dino_text(stage,(112,63))
+  limit=_DINO_MODES[g.mode_id][1]
+  timer=f'{max(0,math.ceil(limit-g.seconds))} s' if limit else f'{g.seconds:.1f} s'
+  for x,label,value in ((315,'PUNTS',str(g.score)),(464,'RESTANTS' if limit else 'TEMPS',timer),(605,'RÈCORD',str(max(g.score,SAVE.get('dino_best',0))))):
+    dino_text(label,(x,34),SMALL,(171,199,186)); dino_text(value,(x,61),TITLE_FONT)
+  active=[]
+  if g.shield: active.append('Escut')
+  if g.magnet: active.append(f'Imant {(g.magnet+59)//60}s')
+  if g.slow: active.append(f'Lent {(g.slow+59)//60}s')
+  if g.double: active.append(f'x2 {(g.double+59)//60}s')
+  if active:
+    pygame.draw.rect(SCREEN,(28,45,43),(155,99,390,31),border_radius=9)
+    dino_text(' · '.join(active),(350,114))
+  if g.warning:
+    pygame.draw.rect(SCREEN,(101,62,31),(18,155,240,40),border_radius=12); dino_text('! Ve un obstacle per l’esquerra',(138,175),SMALL,(255,230,165))
+  if g.notice_timer:
+    pygame.draw.rect(SCREEN,(28,45,43),(170,138,360,32),border_radius=9); dino_text(g.notice,(350,154),SMALL,(248,221,137))
+  pygame.draw.rect(SCREEN,(28,45,43),(0,650,WIDTH,100))
+  dino_text('Toca per saltar · Torna a tocar a l’aire per fer un doble salt',(350,668),SMALL)
+  labels={'menu':'Menú','restart':'Reinicia','save':'Desa','pause':'Continua' if g.paused else 'Pausa','jump':'SALTAR'}
+  for k,r in dino_control_rects(): dino_ui_button(r,labels[k],k=='jump')
+  if g.paused and not g.winner:
+    pygame.draw.rect(SCREEN,(28,45,43),(115,275,470,125),border_radius=18)
+    dino_text('PAUSA',(350,312),TITLE_FONT,(248,221,137)); dino_text('Toca la pantalla per continuar',(350,362),FONT)
 
 def process_dino(app,events):
-  g=app.game; rest=[]
+  g=app.game
   for ev in events:
-    if not g.started and not g.paused and ev.type==pygame.MOUSEBUTTONDOWN and ev.button==1:
-      key=next((k for k,r in dino_lobby_rects().items() if r.collidepoint(ev.pos)),None)
-      if key: dino_lobby_action(g,key); continue
-      if 171<=ev.pos[1]<=559: continue
-    rest.append(ev)
-  _old_process_dino(app,rest)
+    if ev.type==getattr(pygame,'WINDOWFOCUSLOST',-999):
+      if g.started and not g.winner: g.paused=True; g.accum=0.; g.duck=False; g.duck_timer=0
+    elif ev.type==pygame.KEYDOWN:
+      if ev.key in (pygame.K_ESCAPE,pygame.K_m): app.leave(); return
+      if ev.key==pygame.K_r: app.restart(); return
+      if g.winner: continue
+      if ev.key==pygame.K_p and g.started: g.toggle_pause()
+      elif ev.key in (pygame.K_SPACE,pygame.K_UP,pygame.K_w):
+        if g.paused: g.toggle_pause()
+        elif not g.started: dino_lobby_action(g,'start')
+        else: g.jump()
+    elif ev.type==pygame.MOUSEBUTTONDOWN and ev.button==1:
+      if app.result:
+        _,again,menu=result_buttons()
+        if again.collidepoint(ev.pos): app.restart(); return
+        if menu.collidepoint(ev.pos): app.leave(); return
+        continue
+      if g.winner: continue
+      if not g.started and not g.paused:
+        key=next((k for k,r in dino_lobby_rects().items() if r.collidepoint(ev.pos)),None)
+        if key=='menu': app.leave(); return
+        if key: dino_lobby_action(g,key)
+        continue
+      action=next((k for k,r in dino_control_rects() if r.collidepoint(ev.pos)),None)
+      if action=='menu': app.leave(); return
+      if action=='restart': app.restart(); return
+      if action=='save':
+        g.paused=True; g.accum=0.; app.press('save'); return
+      if action=='pause': g.toggle_pause()
+      elif action=='jump' or action is None:
+        if g.paused: g.toggle_pause()
+        else: g.jump()
 
 
 ACH += [
@@ -16893,6 +16946,247 @@ def draw_achievement_medal(center,key,done):
     pygame.draw.circle(SCREEN,col,(x,y+6),8,2); pygame.draw.line(SCREEN,col,(x,y+6),(x,y+1),2); pygame.draw.line(SCREEN,col,(x,y+6),(x+4,y+9),2)
   else:
     pygame.draw.polygon(SCREEN,col,[(x-10,y+13),(x-3,y-2),(x+3,y+6),(x+6,y+1),(x+11,y+13)],2)
+
+# Tutorials visuals: una sola lliçó per pantalla, amb exemple i resposta.
+GUIDES = {
+ 'morris': [
+  ('Col·loca una fitxa','Alterna torns i posa una fitxa en qualsevol punt buit. El nombre inicial es pot canviar a Configuració.','Col·loca la fitxa blanca al punt indicat.','place'),
+  ('Mou les fitxes','Quan no et quedin fitxes a la mà, selecciona una de les teves i mou-la a un punt buit. Amb moviment adjacent, només pots seguir una línia.','Mou la fitxa blanca al punt adjacent.','move'),
+  ('Forma una línia','Guanyes quan tres fitxes del teu color formen una línia vàlida. Les diagonals de cantonada només compten si estan activades.','Completa la línia superior.','win')],
+ 'c4': [
+  ('Deixa caure una fitxa','Tria una de les set columnes. La fitxa cau fins a la primera casella lliure; no es pot triar la fila.','Clica la columna marcada.','drop'),
+  ('Bloqueja el rival','Si el rival té tres fitxes consecutives i la quarta casella és accessible, ocupa-la abans que ell.','Impedeix la victòria dels grocs.','block'),
+  ('Quatre en línia','Guanyes amb quatre fitxes del mateix color, en horitzontal, vertical o diagonal.','Completa les quatre vermelles.','win')],
+ 'chess': [
+  ('Peó','Avança una casella, o dues des de la posició inicial si estan lliures. Captura una casella en diagonal.','Avança el peó una casella.','pawn'),
+  ('Torre','Es mou en horitzontal i vertical sense saltar altres peces.','Mou la torre en línia recta.','rook'),
+  ('Alfil','Es mou per les diagonals, sense saltar.','Mou l’alfil en diagonal.','bishop'),
+  ('Cavall','Fa una L: dues caselles en una direcció i una de costat. Pot saltar peces.','Completa el salt en L.','knight'),
+  ('Dama','La dama combina els moviments de la torre i l’alfil.','Mou la dama en diagonal.','queen'),
+  ('Rei','El rei avança una casella en qualsevol direcció, però no pot entrar en escac.','Mou el rei una casella.','king'),
+  ('Enroc','El rei avança dues caselles cap a la torre i aquesta passa a l’altre costat. Cal que cap dels dos s’hagi mogut, que el camí sigui lliure i que el rei no passi per escac.','Fes un enroc curt.','castle'),
+  ('Coronació','Quan el peó arriba al final del tauler, tria dama, torre, alfil o cavall.','Corona el peó; en aquest exemple triem la dama.','promotion'),
+  ('Escac i mat','Si el rei està atacat i no hi ha cap jugada legal que el salvi, la partida acaba. Si no està atacat però no pot jugar, és ofegat i són taules.','La dama, protegida pel rei blanc, completa el mat.','mate'),
+  ('Captura al pas','Si un peó rival acaba d’avançar dues caselles i queda al costat del teu, el pots capturar com si només n’hagués avançat una. Només al torn següent.','Captura el peó al pas.','passant')],
+ 'go': [
+  ('Llibertats','Les pedres es posen a les interseccions. Els punts lliures adjacents en creu són llibertats.','Observa les quatre llibertats de la pedra.','liberty'),
+  ('Captura','Quan una pedra o grup queda sense llibertats, es retira del tauler.','Posa una pedra negra a l’última llibertat.','capture'),
+  ('Territori','Envolta interseccions lliures. Quan els dos jugadors passen, es compten les pedres i el territori; les blanques reben 7,5 punts de compensació.','Observa un punt de territori negre.','territory'),
+  ('Jugades prohibides','No pots posar una pedra sense llibertats si no captures. Tampoc pots repetir una posició anterior del tauler.','Observa per què el punt central no és legal.','illegal')],
+ 'shogi': [
+  ('Peó','El peó avança i captura un pas recte endavant, a diferència dels escacs.','Mou el peó endavant.','pawn'),
+  ('Llança','La llança avança recte tantes caselles com vulgui, però no pot saltar peces ni retrocedir.','Mou la llança endavant.','lance'),
+  ('Cavall','Salta dues files endavant i una columna a dreta o esquerra. No pot saltar cap enrere.','Prova el salt del cavall.','knight'),
+  ('General de plata','La plata avança recte o per les quatre diagonals.','Mou la plata en diagonal endavant.','silver'),
+  ('General d’or','L’or avança en tres direccions, es mou als costats o un pas recte enrere.','Mou el general d’or cap al costat.','gold'),
+  ('Torre','La torre es mou en línies rectes i no salta altres peces.','Prova un moviment de torre.','rook'),
+  ('Alfil','L’alfil es mou per les diagonals i no salta altres peces.','Prova un moviment d’alfil.','bishop'),
+  ('Rei','El rei es mou un pas en qualsevol direcció sense entrar en escac. Guanyes quan el rei rival rep escac i mat.','Mou el rei a una casella segura.','king'),
+  ('Promoció','En entrar, sortir o moure dins les tres files rivals, pots promocionar. Peó, llança, cavall i plata passen a moure’s com l’or. Torre i alfil guanyen passos de rei.','Promociona el peó; la peça passa a tenir el símbol vermell.','promotion'),
+  ('Reutilitza captures','Les peces capturades van a la mà i es poden tornar a posar en una casella buida. No pots posar dos peons no promocionats teus a la mateixa columna ni deixar una peça sense moviments futurs.','Col·loca la peça de la mà al tauler.','drop')],
+ 'dino': [
+  ('Un toc per saltar','Toca qualsevol zona del joc, o prem Espai, W o fletxa amunt. No cal ajupir-se.','Toca el dibuix per veure un salt sobre el cactus.','jump'),
+  ('Doble salt','Torna a tocar mentre ets a l’aire per guanyar altura i superar obstacles amples. Els ocells alts es poden passar corrent.','Prova un doble salt sobre el vehicle.','double'),
+  ('Monedes i potenciadors','Guanya 10 punts de cursa per segon i 20 per moneda. Els combos i reptes donen bonificacions. L’escut protegeix d’una col·lisió; l’imant atrau monedes.','Observa com es recullen les monedes.','coins'),
+  ('Tria el repte','Infinit no té límit. Sprint dura 60 segons i Expedició 120. Pots pausar i desar la cursa. Els punts de botiga s’afegeixen en acabar.','Consulta l’objectiu i comença a jugar.','modes')]
+}
+_GUIDE_PANEL = (55,170,590,307)
+
+def guide_rects():
+  return {'back':back_button_rect(),'prev':pygame.Rect(45,665,165,46),'reveal':pygame.Rect(225,665,250,46),'next':pygame.Rect(490,665,165,46),'diagram':pygame.Rect(*_GUIDE_PANEL)}
+
+def guide_fit(txt,center,font=FONT,color=None,maxw=600):
+  t=font.render(txt,True,color or TEXT_COLOR)
+  if t.get_width()>maxw:
+    f=maxw/t.get_width(); t=pygame.transform.smoothscale(t,(maxw,max(1,int(t.get_height()*f))))
+  SCREEN.blit(t,t.get_rect(center=center))
+
+def guide_arrow(a,b,col=(27,125,94)):
+  pygame.draw.line(SCREEN,col,a,b,4)
+  dx,dy=b[0]-a[0],b[1]-a[1]; length=max(1,math.hypot(dx,dy)); ux,uy=dx/length,dy/length
+  pygame.draw.polygon(SCREEN,col,[b,(b[0]-ux*13-uy*7,b[1]-uy*13+ux*7),(b[0]-ux*13+uy*7,b[1]-uy*13-ux*7)])
+
+def guide_disc(pos,white,r=15):
+  pygame.draw.circle(SCREEN,(245,242,222) if white else (50,56,62),pos,r)
+  pygame.draw.circle(SCREEN,(86,82,74),pos,r,2)
+
+def guide_target(pos,r=19):
+  pygame.draw.circle(SCREEN,(40,151,107),pos,r,3)
+
+def guide_grid(n,cell,y=181,shogi=False):
+  x=350-n*cell//2
+  for r in range(n):
+    for c in range(n):
+      rr=pygame.Rect(x+c*cell,y+r*cell,cell,cell)
+      col=(229,184,115) if shogi else ((238,221,187) if (r+c)%2==0 else (151,116,82))
+      pygame.draw.rect(SCREEN,col,rr)
+      if shogi: pygame.draw.rect(SCREEN,(110,81,48),rr,1)
+  return lambda r,c:(x+c*cell+cell//2,y+r*cell+cell//2)
+
+def guide_visual(kind,tag,reveal,area):
+  # Retorna el punt que es pot clicar per completar l'exemple.
+  if kind=='morris':
+    x,y=350,320
+    for h in (111,74,37): pygame.draw.rect(SCREEN,(101,79,48),(x-h,y-h,2*h,2*h),3)
+    for a,b in (((x,y-111),(x,y-37)),((x,y+37),(x,y+111)),((x-111,y),(x-37,y)),((x+37,y),(x+111,y))): pygame.draw.line(SCREEN,(101,79,48),a,b,3)
+    dest=(461,209) if tag=='win' else (350,209)
+    whites=[(239,209),(350,209)] if tag=='win' else [(239,209)]
+    if tag=='move': whites=[] if reveal else [(239,209)]
+    if reveal: whites.append(dest)
+    for p in whites: guide_disc(p,True)
+    for p in [(276,394),(424,320)]: guide_disc(p,False)
+    if not reveal:
+      guide_target(dest)
+      if tag=='move': guide_arrow((255,209),(328,209))
+    elif tag=='win': pygame.draw.line(SCREEN,(35,153,105),(239,209),(461,209),5)
+    return dest
+  if kind=='c4':
+    c=41; x=350-7*c//2; y=189
+    pygame.draw.rect(SCREEN,(36,80,153),(x-5,y-5,7*c+10,6*c+10),border_radius=11)
+    row=[1,1,1,0,2,2,0] if tag=='win' else [2,2,2,0,1,1,0] if tag=='block' else [1,2,0,0,0,1,2]
+    destcol=3 if tag!='drop' else 2
+    if reveal: row[destcol]=1
+    for r in range(6):
+      for j in range(7):
+        v=row[j] if r==5 else 0; p=(x+j*c+c//2,y+r*c+c//2)
+        pygame.draw.circle(SCREEN,{0:(24,48,99),1:(222,66,50),2:(247,205,59)}[v],p,17)
+    dest=(x+destcol*c+c//2,y+5*c+c//2)
+    if not reveal: guide_arrow((dest[0],y+9),(dest[0],dest[1]-19)); guide_target(dest)
+    if reveal and tag=='win': pygame.draw.line(SCREEN,(255,248,185),(x+c//2,dest[1]),dest,4)
+    return dest
+  if kind=='go':
+    d=53; x=244; y=214
+    for i in range(5):
+      pygame.draw.line(SCREEN,(101,79,48),(x,y+i*d),(x+4*d,y+i*d),2); pygame.draw.line(SCREEN,(101,79,48),(x+i*d,y),(x+i*d,y+4*d),2)
+    at=lambda r,c:(x+c*d,y+r*d)
+    center=at(2,2); dest=at(3,2)
+    if tag=='liberty':
+      guide_disc(center,False)
+      if reveal:
+        for r,c in [(2,1),(1,2),(2,3),(3,2)]: guide_target(at(r,c),10)
+      return center
+    if tag=='capture':
+      for r,c in [(2,1),(1,2),(2,3)]: guide_disc(at(r,c),False)
+      if reveal: guide_disc(dest,False); guide_target(center,11)
+      else: guide_disc(center,True); guide_target(dest)
+      return dest
+    if tag in ('territory','illegal'):
+      for r,c in [(2,1),(1,2),(2,3),(3,2)]: guide_disc(at(r,c),False)
+      if reveal: guide_fit('+1' if tag=='territory' else 'X',center,FONT,(26,130,88) if tag=='territory' else (174,53,48))
+      else: guide_target(center)
+      return center
+  if kind=='chess':
+    cell=33; at=guide_grid(8,cell,190)
+    white=(247,244,227); black=(45,49,53); line=(75,66,53)
+    def piece(p,r,c):
+      draw_chess_piece(abs(p),*at(r,c),15,white if p>0 else black,line if p>0 else (20,25,29))
+    moves={'pawn':(1,(6,3),(5,3),[(5,3),(4,3)]),'rook':(4,(4,3),(4,6),[(4,j) for j in range(8) if j!=3]+[(j,3) for j in range(8) if j!=4]),'bishop':(3,(4,3),(2,5),[(r,c) for r in range(8) for c in range(8) if abs(r-4)==abs(c-3) and r!=4]),'knight':(2,(4,3),(2,4),[(r,c) for r in range(8) for c in range(8) if sorted((abs(r-4),abs(c-3)))==[1,2]]),'queen':(5,(4,3),(2,5),[(r,c) for r in range(8) for c in range(8) if (r,c)!=(4,3) and (r==4 or c==3 or abs(r-4)==abs(c-3))]),'king':(6,(4,3),(3,4),[(r,c) for r in (3,4,5) for c in (2,3,4) if (r,c)!=(4,3)]),'promotion':(1,(1,3),(0,3),[(0,3)]),'castle':(6,(7,4),(7,6),[(7,6)]),'mate':(5,(2,1),(1,1),[(1,1)]),'passant':(1,(3,3),(2,4),[(2,4)])}
+    p,a,b,targets=moves[tag]
+    if tag=='castle': piece(4,7,5 if reveal else 7)
+    elif tag=='mate': piece(-6,0,0); piece(6,2,2)
+    elif tag=='passant' and not reveal: piece(-1,3,4)
+    if not reveal:
+      for rc in targets: pygame.draw.circle(SCREEN,(58,146,102),at(*rc),4)
+      piece(p,*a); guide_target(at(*b),13)
+    else:
+      piece(5 if tag=='promotion' else p,*b); guide_target(at(*b),15)
+      if tag=='mate': guide_target(at(0,0),15)
+    return at(*b)
+  if kind=='shogi':
+    at=guide_grid(5,49,190,True)
+    guide_fit('Fragment del tauler',(350,454),SMALL,maxw=300)
+    moves={'pawn':(1,(3,2),(2,2),[(2,2)]),'lance':(2,(4,2),(1,2),[(r,2) for r in range(4)]),'knight':(3,(4,2),(2,3),[(2,1),(2,3)]),'silver':(4,(3,2),(2,1),[(2,1),(2,2),(2,3),(4,1),(4,3)]),'gold':(5,(3,2),(3,3),[(2,1),(2,2),(2,3),(3,1),(3,3),(4,2)]),'bishop':(6,(3,2),(1,4),[(r,c) for r in range(5) for c in range(5) if abs(r-3)==abs(c-2) and r!=3]),'rook':(7,(3,2),(3,4),[(3,j) for j in (0,1,3,4)]+[(j,2) for j in (0,1,2,4)]),'king':(8,(3,2),(2,3),[(r,c) for r in (2,3,4) for c in (1,2,3) if (r,c)!=(3,2)]),'promotion':(1,(1,2),(0,2),[(0,2)]),'drop':(6,(4,2),(2,2),[(2,2)])}
+    p,a,b,targets=moves[tag]
+    def piece(p,pos):
+      xy=at(*pos); shogi_piece(p,pygame.Rect(xy[0]-22,xy[1]-22,44,44))
+    if tag=='promotion': pygame.draw.rect(SCREEN,(130,91,54),(228,190,245,49),2)
+    if not reveal:
+      for rc in targets: pygame.draw.circle(SCREEN,(37,145,98),at(*rc),5)
+      if tag=='drop':
+        shogi_piece(p,pygame.Rect(100,300,48,48)); guide_fit('Mà',(124,365),SMALL,maxw=85)
+      else: piece(p,a)
+      guide_target(at(*b),19)
+    else: piece(9 if tag=='promotion' else p,b); guide_target(at(*b),22)
+    return at(*b)
+  if kind=='dino':
+    pygame.draw.rect(SCREEN,(244,216,161),(75,195,550,246),border_radius=14)
+    pygame.draw.circle(SCREEN,(255,242,175),(545,238),25)
+    pygame.draw.polygon(SCREEN,(187,145,103),[(75,355),(170,267),(260,342),(390,255),(625,350),(625,441),(75,441)])
+    pygame.draw.rect(SCREEN,(205,159,95),(75,388,550,53)); pygame.draw.line(SCREEN,(121,88,54),(75,388),(625,388),3)
+    dest=(350,320)
+    if tag=='jump': dino_cactus(pygame.Rect(330,333,25,55))
+    elif tag=='double': dino_draw_hazard({'type':'jeep','x':310,'y':339,'w':96,'h':49,'warn':0},type('Example',(),{'move_count':0})())
+    elif tag=='coins':
+      for i in range(3):
+        if not reveal:
+          pygame.draw.circle(SCREEN,(236,183,52),(310+i*36,320),12); pygame.draw.circle(SCREEN,(128,94,26),(310+i*36,320),12,2)
+      if reveal: guide_fit('+60 punts',(405,300),TITLE_FONT,(53,105,61))
+    if tag=='modes':
+      guide_fit('Infinit   ·   60 s   ·   120 s',(350,280),TITLE_FONT,(56,65,49)); guide_fit('Sense límit     Sprint     Expedició',(350,314),SMALL,(56,65,49))
+      if reveal: guide_fit('Preparat per jugar!',(350,354),FONT,(40,105,67))
+    else:
+      # El dibuix del salt canvia amb el toc, sense alterar cap partida real.
+      px=365 if reveal else 160; py=282 if reveal and tag=='double' else 304 if reveal else 388
+      im=pygame.transform.scale(dino_skin_sprite('jump' if reveal else 'run',0,0),(85,68)); SCREEN.blit(im,im.get_rect(midbottom=(px,py)))
+      if not reveal: guide_arrow((206,345),(295,275)); guide_target((350,300),18)
+    return dest
+  return None
+
+_original_draw_extra=App.draw_extra
+_original_process_extra=App.process_extra
+
+def draw_guide_screen(app):
+  draw_background('menu'); draw_button(back_button_rect(),'< Enrere')
+  lessons=GUIDES[app.kind]; i=max(0,min(len(lessons)-1,app.demo)); title,desc,prompt,tag=lessons[i]
+  reveal=getattr(app,'guide_reveal',False) if app.demo>=0 else False
+  guide_fit('Com es juga · '+GAME_TITLES[app.kind],(350,81),TITLE_FONT)
+  guide_fit(f'{i+1} / {len(lessons)}  ·  {title}',(350,117),FONT)
+  bar=pygame.Rect(100,140,500,8); pygame.draw.rect(SCREEN,(204,213,200),bar,border_radius=4); pygame.draw.rect(SCREEN,(67,145,113),(bar.x,bar.y,round(bar.w*(i+1)/len(lessons)),bar.h),border_radius=4)
+  pygame.draw.rect(SCREEN,(249,241,218),pygame.Rect(*_GUIDE_PANEL),border_radius=16)
+  pygame.draw.rect(SCREEN,(173,157,121),pygame.Rect(*_GUIDE_PANEL),1,border_radius=16)
+  app.guide_target=guide_visual(app.kind,tag,reveal,pygame.Rect(*_GUIDE_PANEL))
+  for j,line in enumerate(wrap_text(desc,FONT,580)): guide_fit(line,(350,500+j*25),FONT,maxw=580)
+  message='Exemple resolt. Pots passar a la següent lliçó.' if reveal else prompt
+  guide_fit(message,(350,624),SMALL,(35,109,80),590)
+  rects=guide_rects(); draw_button(rects['prev'],'Anterior',i>0); draw_button(rects['reveal'],'Repetir exemple' if reveal else 'Veure exemple'); draw_button(rects['next'],'Següent' if i+1<len(lessons) else 'Acabar')
+
+def guide_process(app,events):
+  if app.demo<0: app.demo=0; app.guide_reveal=False
+  rects=guide_rects(); n=len(GUIDES[app.kind])
+  for e in events:
+    action=None
+    if e.type==pygame.KEYDOWN:
+      if e.key in (pygame.K_ESCAPE,pygame.K_m): action='back'
+      elif e.key==pygame.K_LEFT: action='prev'
+      elif e.key==pygame.K_RIGHT: action='next'
+      elif e.key in (pygame.K_SPACE,pygame.K_RETURN): action='reveal'
+    elif e.type==pygame.MOUSEBUTTONDOWN and e.button==1:
+      action=next((k for k,r in rects.items() if r.collidepoint(e.pos)),None)
+      if action=='diagram':
+        # Els exemples de joc de taula responen al punt marcat; el botó
+        # Veure exemple sempre permet avançar sense haver de fer punteria.
+        target=getattr(app,'guide_target',None)
+        if app.kind=='dino' or target is None or (app.kind=='c4' and abs(e.pos[0]-target[0])<=20) or math.hypot(e.pos[0]-target[0],e.pos[1]-target[1])<=32:
+          app.guide_reveal=True
+        continue
+    if action=='back': extra_back(app); return
+    if action=='reveal': app.guide_reveal=not getattr(app,'guide_reveal',False)
+    elif action=='prev': app.demo=max(0,app.demo-1); app.guide_reveal=False
+    elif action=='next':
+      if app.demo+1>=n: extra_back(app); return
+      app.demo+=1; app.guide_reveal=False
+
+def draw_extra_clean(app):
+  if app.state=='guide': draw_guide_screen(app)
+  else: _original_draw_extra(app)
+
+def process_extra_clean(app,events):
+  if app.state=='guide': guide_process(app,events)
+  else: _original_process_extra(app,events)
+
+App.draw_extra=draw_extra_clean
+App.process_extra=process_extra_clean
+
 
 async def main():
   clock = pygame.time.Clock()
