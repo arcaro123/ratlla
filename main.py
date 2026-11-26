@@ -750,7 +750,7 @@ def load_save():
         for field in ("wins","best"):
           if isinstance(mp.get(field),dict):
             for k,v in mp[field].items():
-              if k in ("mine_easy","mine_normal","mine_hard","mine_classic","mine_quick") and isinstance(v,(int,float)) and v>=0: data["mine_profile"][field][k]=v
+              if k in ("mine_easy","mine_normal","mine_hard","mine_classic","mine_quick","mine_treasure") and isinstance(v,(int,float)) and v>=0: data["mine_profile"][field][k]=v
       profile=loaded.get("dino_profile",{})
       if isinstance(profile,dict):
         for k in ("runs","coins","time","sprint","expedition","skin"):
@@ -4224,7 +4224,7 @@ class App:
       ], "Tria un joc per començar")
     if s == "modes":
       if self.kind == "mines":
-        return ("Buscamines", "Tria la teva missió", [(k,name.upper(),f"{n} × {n} · {m} mines · "+("Sense escut" if k=="mine_classic" else f"+{pts} punts"),True) for k,(name,n,m,pts) in MINE_LEVELS.items()]+[("guide","COM ES JUGA","Aprèn amb exemples",True)], "Tria una missió · M = enrere")
+        return ("Buscamines", "Tria la teva missió", [(k,name.upper(),f"{n} × {n} · {m} mines · "+("5 gemmes · Radar" if k=="mine_treasure" else "Sense escut" if k=="mine_classic" else f"+{pts} punts"),True) for k,(name,n,m,pts) in MINE_LEVELS.items()]+[("guide","COM ES JUGA","Aprèn amb exemples",True)], "Tria una missió · M = enrere")
       if self.kind == "dino":
         return (GAME_TITLES[self.kind], "Tria què vols fer", [
             ("solo", "JUGAR", "Corre, salta i esquiva obstacles", True),
@@ -4564,7 +4564,7 @@ class App:
         profile['wins'][g.level]=profile['wins'].get(g.level,0)+1
         profile['best'][g.level]=round(g.seconds,1) if best is None else min(best,round(g.seconds,1))
       SAVE['points']+=points
-      self.result=dict(title='MISSIÓ COMPLETADA!' if won else 'FI DE LA MISSIÓ',color=COLOR_WIN if won else COLOR_LOSE,lines=[f"Temps: {g.seconds:.1f} s"+(f" · Robots: {len(g.rescued)}/3" if g.level!='mine_classic' else " · Clàssic"),f"Caselles segures: {len(g.opened)}/{g.n*g.n-g.total}",f"Botiga: +{points} punts",f"Millor temps: {profile['best'][g.level]:.1f} s" if g.level in profile['best'] else 'Torna-ho a provar!'])
+      self.result=dict(title='MISSIÓ COMPLETADA!' if won else 'FI DE LA MISSIÓ',color=COLOR_WIN if won else COLOR_LOSE,lines=[f"Temps: {g.seconds:.1f} s"+(f" · Gemmes: {len(g.collected)}/5" if g.level=='mine_treasure' else f" · Robots: {len(g.rescued)}/3" if g.level!='mine_classic' else " · Clàssic"),f"Caselles segures: {len(g.opened)}/{g.n*g.n-g.total}",f"Botiga: +{points} punts",f"Millor temps: {profile['best'][g.level]:.1f} s" if g.level in profile['best'] else 'Torna-ho a provar!'])
       if self.slot is not None: SAVE['slots'][self.slot]=None; self.slot=None
       write_save(); return
     if kind == "dino":
@@ -17766,13 +17766,14 @@ def dino_draw_tall(h,g):
 
 
 # BUSCAMINES: RESCAT — joc individual, sense recursos externs.
-MINE_LEVELS={'mine_easy':('Fàcil',8,10,20),'mine_normal':('Normal',10,18,45),'mine_hard':('Difícil',12,28,85),'mine_classic':('Clàssic',10,18,55),'mine_quick':('Ràpid',6,6,10)}
+MINE_LEVELS={'mine_easy':('Fàcil',8,10,20),'mine_normal':('Normal',10,18,45),'mine_hard':('Difícil',12,28,85),'mine_classic':('Clàssic',10,18,55),'mine_quick':('Ràpid',6,6,10),'mine_treasure':('Tresors',10,16,60)}
 
 class MinesRun:
   def __init__(self,level='mine_normal'):
     self.level=level if level in MINE_LEVELS else 'mine_normal'
     _,self.n,self.total,self.reward=MINE_LEVELS[self.level]
     self.mines=set(); self.opened=set(); self.flags=set(); self.robots=set(); self.rescued=set()
+    self.treasures=set(); self.collected=set(); self.radar_origin=None
     self.counts=[]; self.started=False; self.seconds=0.; self.move_count=0; self.last_move=None
     self.winner=None; self.draw=False; self.rewarded=False; self.shield=False; self.shield_used=False
     self.flag_mode=False; self.hit=None; self.notice='Tria qualsevol casella per començar'; self.notice_timer=0.
@@ -17785,8 +17786,15 @@ class MinesRun:
     safe={i,*self.neighbors(i)}
     self.mines=set(random.sample([j for j in range(self.n*self.n) if j not in safe],self.total))
     self.counts=[sum(j in self.mines for j in self.neighbors(k)) for k in range(self.n*self.n)]
-    self.robots=set() if self.level=='mine_classic' else set(random.sample([j for j in range(self.n*self.n) if j not in self.mines and j!=i],3))
+    self.robots=set() if self.level in ('mine_classic','mine_treasure') else set(random.sample([j for j in range(self.n*self.n) if j not in self.mines and j!=i],3))
+    if self.level=='mine_treasure':
+      self.treasures=set(random.sample([j for j in range(self.n*self.n) if j not in self.mines and j not in safe],5))
     self.started=True
+
+  def radar_distance(self):
+    if self.radar_origin is None or not (self.treasures-self.collected): return None
+    r,c=divmod(self.radar_origin,self.n)
+    return min(abs(r-j//self.n)+abs(c-j%self.n) for j in self.treasures-self.collected)
 
   def say(self,text):
     self.notice=text; self.notice_timer=3.
@@ -17802,6 +17810,8 @@ class MinesRun:
     if self.winner or not 0<=i<self.n*self.n or i in self.flags: return
     if not self.started: self.generate(i)
     if i in self.opened:
+      if self.level=='mine_treasure':
+        self.radar_origin=i; return
       # Obrir els veïns d'un número quan té les banderes necessàries.
       ns=self.neighbors(i)
       if self.counts[i] and sum(j in self.flags for j in ns)==self.counts[i]:
@@ -17818,17 +17828,22 @@ class MinesRun:
           self.flags.remove(min(self.flags-self.mines))
         self.flags.add(i); self.say('Escut utilitzat! Mina marcada.'); return
       self.hit=i; self.winner='loss'; return
+    if self.level=='mine_treasure': self.radar_origin=i
     todo=[i]
     while todo:
       j=todo.pop()
       if j in self.opened or j in self.flags or j in self.mines: continue
       self.opened.add(j)
+      if j in self.treasures:
+        self.collected.add(j); self.say(f'Gemma trobada! {len(self.collected)}/5')
       if j in self.robots:
         self.rescued.add(j); self.say(f'Robot rescatat! {len(self.rescued)}/3')
         if len(self.rescued)==3 and not self.shield_used:
           self.shield=True; self.say('Tres robots rescatats! Escut activat.')
       if self.counts[j]==0: todo.extend(k for k in self.neighbors(j) if k not in self.opened and k not in self.flags)
-    if len(self.opened)==self.n*self.n-self.total:
+    if self.level=='mine_treasure':
+      if len(self.collected)==5: self.winner='win'
+    elif len(self.opened)==self.n*self.n-self.total:
       self.winner='win'; self.flags=set(self.mines)
 
   def update(self,dt):
@@ -17850,6 +17865,7 @@ def mine_photo(size,kind='mine',phase=0,opacity=255):
   im=pygame.transform.smoothscale(_MINE_PHOTO,(size,size))
   if kind=='rescue': im.fill((123,255,207,255),special_flags=pygame.BLEND_RGBA_MULT)
   if kind=='amber': im.fill((255,205,142,255),special_flags=pygame.BLEND_RGBA_MULT)
+  if kind=='treasure': im.fill((198,172,255,255),special_flags=pygame.BLEND_RGBA_MULT)
   if opacity!=255: im.set_alpha(opacity)
   if len(_MINE_PHOTO_CACHE)>160: _MINE_PHOTO_CACHE.clear()
   _MINE_PHOTO_CACHE[key]=im
@@ -17858,7 +17874,7 @@ def mine_photo(size,kind='mine',phase=0,opacity=255):
 def mine_backdrop(g):
   # Mascotes decoratives al marge: no afecten ni oculten les caselles.
   b,_=mine_board(g)
-  palette='amber' if g.level=='mine_classic' else 'rescue' if g.level=='mine_quick' else 'mine'
+  palette='treasure' if g.level=='mine_treasure' else 'amber' if g.level=='mine_classic' else 'rescue' if g.level=='mine_quick' else 'mine'
   for center,sz,op in (((63,270),128,118),((635,521),128,118),((65,505),94,65),((635,270),94,65)):
     im=mine_photo(sz,palette,0,op); SCREEN.blit(im,im.get_rect(center=center))
 
@@ -17925,14 +17941,29 @@ def mine_tile(rect,opened=False,number=0,flag=False,robot=False,mine=False,hit=F
     if mine: mine_icon(r.center,r.w,'mine',phase)
     elif flag: mine_flag(r)
 
+def mine_gem(center,size,phase=0):
+  x,y=center; a=max(5,size//2); b=max(3,a//2)
+  pts=[(x-a,y-b),(x-b,y-a),(x+b,y-a),(x+a,y-b),(x,y+a)]
+  pygame.draw.polygon(SCREEN,(52,40,95),pts)
+  pygame.draw.polygon(SCREEN,(152,103,228),pts,0)
+  pygame.draw.polygon(SCREEN,(230,210,255),[(x-a+2,y-b),(x-b,y-a+2),(x,y-b)])
+  pygame.draw.polygon(SCREEN,(103,65,178),[(x,y-b),(x+a,y-b),(x,y+a)])
+  pygame.draw.polygon(SCREEN,(52,40,95),pts,1)
+  if phase%8<3: pygame.draw.circle(SCREEN,(255,249,218),(x-b,y-b-1),2)
+
 def draw_mines(app):
   g=app.game; draw_background('mines'); mine_backdrop(g)
   pygame.draw.rect(SCREEN,(25,44,48),(14,14,672,108),border_radius=18)
-  dino_text('BUSCAMINES',(150,40),TITLE_FONT,(249,216,140)); dino_text(('CLÀSSIC' if g.level=='mine_classic' else 'RESCAT · '+MINE_LEVELS[g.level][0]),(150,78),SMALL)
-  for x,label,value in ((350,'MINES',str(g.total-len(g.flags))),(480,'TEMPS',f'{int(g.seconds)} s'),(605,'OBERTES' if g.level=='mine_classic' else 'ROBOTS',str(len(g.opened)) if g.level=='mine_classic' else f'{len(g.rescued)}/3')):
+  treasure=g.level=='mine_treasure'
+  dino_text('BUSCAMINES',(150,40),TITLE_FONT,(249,216,140)); dino_text(('CAÇA DEL TRESOR' if treasure else 'CLÀSSIC' if g.level=='mine_classic' else 'RESCAT · '+MINE_LEVELS[g.level][0]),(150,78),SMALL)
+  for x,label,value in ((350,'MINES',str(g.total-len(g.flags))),(480,'TEMPS',f'{int(g.seconds)} s'),(605,'GEMMES' if treasure else 'OBERTES' if g.level=='mine_classic' else 'ROBOTS',f'{len(g.collected)}/5' if treasure else str(len(g.opened)) if g.level=='mine_classic' else f'{len(g.rescued)}/3')):
     dino_text(label,(x,40),SMALL,(178,209,197)); dino_text(value,(x,77),TITLE_FONT)
   pygame.draw.rect(SCREEN,(28,49,50),(25,133,650,43),border_radius=12)
   msg=g.notice if not g.started or g.notice_timer else ('Escut preparat' if g.shield else 'Obre totes les caselles segures' if g.level=='mine_classic' else 'Localitza les mines i rescata els robots')
+  if treasure:
+    dist=g.radar_distance()
+    msg='Troba 5 gemmes · Primer clic segur' if not g.started else 'Totes les gemmes trobades!' if g.winner=='win' else f'Radar: tresor a {dist} passos' if dist is not None else 'Busca les gemmes amagades'
+    if g.notice_timer and not g.winner: msg=g.notice+' · '+msg
   guide_fit(msg,(350,154),FONT,(245,222,157),620)
   b,c=mine_board(g); pygame.draw.rect(SCREEN,(24,43,48),b.inflate(20,20),border_radius=12)
   phase=pygame.time.get_ticks()//120%8; mp=mouse_pos()
@@ -17940,10 +17971,13 @@ def draw_mines(app):
     y,x=divmod(i,g.n); r=pygame.Rect(b.x+x*c,b.y+y*c,c,c)
     opened=i in g.opened
     mine_tile(r,opened,g.counts[i] if opened else 0,i in g.flags,i in g.rescued,g.winner=='loss' and i in g.mines,g.hit==i,r.collidepoint(mp),phase)
+    if treasure and opened:
+      if i in g.collected: mine_gem((r.right-10,r.top+10),13,phase)
+      if i==g.radar_origin and not g.winner: pygame.draw.rect(SCREEN,(181,126,248),r.inflate(-4,-4),2,border_radius=6)
     if g.winner=='loss' and i in g.flags and i not in g.mines:
       pygame.draw.line(SCREEN,(243,125,100),r.topleft,r.bottomright,3)
   pygame.draw.rect(SCREEN,(26,45,48),(0,640,WIDTH,110))
-  guide_fit('Clic: obrir · Clic dret o F: banderes',(350,663),SMALL,(207,228,213),650)
+  guide_fit('Clic: obrir o moure radar · Clic dret: bandera' if treasure else 'Clic: obrir · Clic dret o F: banderes',(350,663),SMALL,(207,228,213),650)
   for k,r in mine_controls().items():
     dino_ui_button(r,{'menu':'Menú','restart':'Reinicia','save':'Desa','mode':'MODE: BANDERES' if g.flag_mode else 'MODE: OBRIR'}[k],k=='mode')
 
@@ -17995,6 +18029,9 @@ def guide_visual(kind,tag,reveal,area):
   elif tag=='rescue':
     opened={6,7,8,11,16,17}; robots={6,17}
     if reveal: opened.add(12); robots.add(12)
+  elif tag=='treasure':
+    mines={13}; opened={6,7,8,11,12,16,17,18}; flags={13}; target_i=12
+    target=(x+2*cell+24,y+2*cell+24)
   elif tag=='win':
     opened=set(range(25))-mines-{12}; flags={13}
     if reveal: opened.add(12)
@@ -18002,18 +18039,26 @@ def guide_visual(kind,tag,reveal,area):
     rr,cc=divmod(i,5); r=pygame.Rect(x+cc*cell,y+rr*cell,cell,cell)
     number=sum(max(abs(rr-m//5),abs(cc-m%5))==1 for m in mines)
     mine_tile(r,i in opened,number,i in flags,i in robots,i in shown)
+    if tag=='treasure' and i==6: mine_gem((r.right-11,r.top+11),15)
+    if tag=='treasure' and reveal and i==12: pygame.draw.rect(SCREEN,(181,126,248),r.inflate(-4,-4),3,border_radius=6)
+  if tag=='treasure' and reveal: guide_fit('Radar: tresor a 3 passos',(350,465),SMALL,(84,46,138),500)
   if not reveal: guide_target(target,19)
   return target
 
 _mine_previous_menu_icon=draw_menu_icon
 def draw_menu_icon(key,a):
   if key in MINE_LEVELS:
-    color='amber' if key=='mine_classic' else 'rescue' if key=='mine_quick' else 'mine'
-    im=mine_photo(max(12,min(a.w,a.h)-12),color); SCREEN.blit(im,im.get_rect(center=a.center)); return
+    color='treasure' if key=='mine_treasure' else 'amber' if key=='mine_classic' else 'rescue' if key=='mine_quick' else 'mine'
+    im=mine_photo(max(12,min(a.w,a.h)-12),color); SCREEN.blit(im,im.get_rect(center=a.center))
+    if key=='mine_treasure': mine_gem((a.right-23,a.bottom-20),30)
+    return
   return _mine_previous_menu_icon(key,a)
 
+GUIDES['mines'].append(('Caça del tresor','Troba cinc gemmes sense obrir totes les caselles. Clica una casella oberta per moure el radar: els passos es compten en horitzontal i vertical. No hi ha escut.','Activa el radar a la casella marcada.','treasure'))
 GUIDES['mines'].append(('Altres missions','El mode Clàssic no té robots ni escut. El mode Ràpid conserva el rescat en un tauler de 6 × 6.','Prova una partida curta.','open'))
 ACH += [('mines:first','Primer rescat','Completa una partida de Buscamines.',False,lambda:sum(SAVE['mine_profile']['wins'].values())>=1),('mines:hard','Ment precisa','Completa Buscamines difícil.',False,lambda:SAVE['mine_profile']['wins'].get('mine_hard',0)>=1)]
+
+ACH.append(('mines:treasure','Caçador de tresors','Troba les cinc gemmes en una partida.',False,lambda:SAVE['mine_profile']['wins'].get('mine_treasure',0)>=1))
 
 async def main():
   clock = pygame.time.Clock()
