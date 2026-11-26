@@ -103,7 +103,7 @@ def present():
   scale = min(w / WIDTH, h / HEIGHT)
   sw, sh = max(1, int(WIDTH * scale)), max(1, int(HEIGHT * scale))
   VIEW = ((w - sw) // 2, (h - sh) // 2, sw, sh)
-  DISPLAY.fill(BG_COLOR)
+  DISPLAY.fill(FRAME_COLOR)
   DISPLAY.blit(pygame.transform.smoothscale(SCREEN, (sw, sh)), VIEW[:2])
   pygame.display.flip()
 
@@ -118,7 +118,7 @@ def configure_browser():
       const style = document.createElement('style');
       style.textContent = `html, body { margin:0!important; padding:0!important;
         width:100%!important; height:100%!important; overflow:hidden!important;
-        background:#f0d9b5!important; overscroll-behavior:none!important; }
+        background:#d5e2e9!important; overscroll-behavior:none!important; }
         #ratlla-game-canvas { display:block!important; position:fixed!important;
         margin:0!important; padding:0!important; border:0!important;
         transform:none!important; translate:none!important; scale:none!important;
@@ -484,9 +484,30 @@ FX_STYLES = _by_price(FX_STYLES)
 EXTRA_ITEMS = {k: EXTRA_ITEMS[k] for k in (
     "hints", "hints_xl", "undos", "undos_xl", "double", "double_xl")}
 
-SHOP_TABS = (("boards", "Taulers"), ("pieces", "Fitxes"), ("marks", "Marques"),
+BACKGROUND_THEMES = {
+    "auto": dict(name="Original", price=0, desc="El paisatge propi de cada joc. També permet recuperar el fons original."),
+    "mist": dict(name="Boira blava", price=120, desc="Blau grisós i formes suaus.", palette=((241,247,250),(189,213,226),(145,179,199)), motif="waves"),
+    "forest": dict(name="Bosc zen", price=250, desc="Verd sàlvia amb fulles discretes.", palette=((242,247,232),(192,218,188),(130,167,127)), motif="leaves"),
+    "sunset": dict(name="Capvespre", price=350, desc="Tons préssec amb un horitzó càlid.", palette=((255,244,229),(244,199,170),(204,143,120)), motif="hills"),
+    "paper": dict(name="Paper japonès", price=450, desc="Paper ivori i ones japoneses.", palette=((252,247,233),(231,218,193),(174,148,112)), motif="waves"),
+    "violet": dict(name="Lila astral", price=600, desc="Lavanda amb constel·lacions subtils.", palette=((246,240,252),(207,199,235),(159,140,197)), motif="stars"),
+    "marble": dict(name="Marbre", price=800, desc="Gris perla i vetes geomètriques.", palette=((250,251,251),(210,218,223),(155,170,184)), motif="grid"),
+}
+BACKGROUND_DEFAULTS = {
+    "menu": ((241,247,250),(193,213,227),(145,177,197),"grid"),
+    "morris": ((251,245,224),(230,205,159),(175,139,91),"grid"),
+    "c4": ((237,248,255),(183,213,241),(99,155,205),"dots"),
+    "chess": ((244,247,249),(198,213,228),(125,155,181),"grid"),
+    "go": ((245,248,231),(193,215,172),(129,163,111),"leaves"),
+    "shogi": ((253,244,229),(239,211,184),(189,143,116),"waves"),
+    "dino": ((250,248,234),(239,219,177),(185,151,106),"hills"),
+}
+BG_TARGETS = {"menu":"Menú principal", "morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go", "shogi":"Shogi", "dino":"Dino Run"}
+SHOP_BG_TARGET = "menu"
+
+SHOP_TABS = (("backgrounds", "Fons"), ("boards", "Taulers"), ("pieces", "Fitxes"), ("marks", "Marques"),
              ("fx", "Victòria"), ("extras", "Extres"), ("packs", "Packs"))
-TAB_NAMES = {"boards": "tauler", "pieces": "fitxes", "marks": "marca", "fx": "efecte"}
+TAB_NAMES = {"backgrounds": "fons", "boards": "tauler", "pieces": "fitxes", "marks": "marca", "fx": "efecte"}
 COSMETIC_TABS = ("boards", "pieces", "marks", "fx")
 DEAL_DISCOUNT = 0.30
 STOCK_MAX = 99
@@ -500,7 +521,7 @@ def _lighter(c):
 
 
 def shop_table(tab):
-  return {"boards": BOARD_THEMES, "pieces": PIECE_STYLES, "marks": MARK_STYLES,
+  return {"backgrounds": BACKGROUND_THEMES, "boards": BOARD_THEMES, "pieces": PIECE_STYLES, "marks": MARK_STYLES,
           "fx": FX_STYLES, "extras": EXTRA_ITEMS, "packs": PACKS}[tab]
 
 
@@ -596,7 +617,7 @@ def shop_primary(tab, key):
       return "Bloquejat", False
     return f"Comprar pack ({price})", pts >= price
   if key in SAVE["owned"][tab]:
-    if SAVE["equipped"][tab] == key:
+    if (SAVE["backgrounds"][SHOP_BG_TARGET] if tab == "backgrounds" else SAVE["equipped"][tab]) == key:
       return "Equipat", False
     return "Equipar", True
   if not req_check(item.get("req"))[0]:
@@ -638,7 +659,8 @@ def default_save():
       "slots": [None] * 10,
       "streaks": {}, "best_streaks": {}, "achievements": [],
       "clean_wins": 0,
-      "owned": {"boards": ["classic"], "pieces": ["classic"],
+      "backgrounds": {k: "auto" for k in BG_TARGETS},
+      "owned": {"backgrounds": ["auto"], "boards": ["classic"], "pieces": ["classic"],
                 "marks": ["orange"], "fx": ["none"]},
       "equipped": {"boards": "classic", "pieces": "classic",
                    "marks": "orange", "fx": "none"},
@@ -687,6 +709,14 @@ def load_save():
         for k, table in tables:
           if eq.get(k) in table and eq[k] in data["owned"][k]:
             data["equipped"][k] = eq[k]
+      bg_owned = loaded.get("owned", {}).get("backgrounds", [])
+      if isinstance(bg_owned, list):
+        data["owned"]["backgrounds"] = ["auto"] + [k for k in BACKGROUND_THEMES if k != "auto" and k in bg_owned]
+      bg_eq = loaded.get("backgrounds", {})
+      if isinstance(bg_eq, dict):
+        for k in BG_TARGETS:
+          if bg_eq.get(k) in data["owned"]["backgrounds"]:
+            data["backgrounds"][k] = bg_eq[k]
       its = loaded.get("items")
       if isinstance(its, dict):
         for k in data["items"]:
@@ -2828,7 +2858,7 @@ def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
   if len(opts) >= 6:
     draw_square_menu(title, subtitle, opts, mouse_pos, hint)
     return
-  SCREEN.fill(BG_COLOR)
+  draw_background(ACTIVE_BACKGROUND)
 
   t = BIG_FONT.render(title, True, TEXT_COLOR)
   SCREEN.blit(t, (WIDTH // 2 - t.get_width() // 2, 110))
@@ -3103,7 +3133,7 @@ def draw_turn_indicator(color_fill, color_border):
 
 def draw_morris(app):
   g = app.game
-  SCREEN.fill(BG_COLOR)
+  draw_background("morris")
 
   title = TITLE_FONT.render("Tres en ratlla", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
@@ -3225,12 +3255,6 @@ def apply_theme():
   BG_COLOR, LINE_COLOR = t["bg"], t["line"]
   BOARD_BLUE, BOARD_DARK = t["c4"], t["c4dark"]
   _C4_SURF.clear()                 # el tauler del 4 en ratlla es torna a dibuixar
-  if HAS_JS:
-    try:
-      color = '#%02x%02x%02x' % BG_COLOR
-      js.window.eval("document.documentElement.style.setProperty('background', '%s', 'important'); document.body.style.setProperty('background', '%s', 'important');" % (color, color))
-    except Exception:
-      pass
 
 
 def c4_board_surface():
@@ -3269,7 +3293,7 @@ def draw_c4_piece(owner, pos, r=32):
 
 def draw_c4(app):
   g = app.game
-  SCREEN.fill(BG_COLOR)
+  draw_background("c4")
 
   title = TITLE_FONT.render("4 en ratlla", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
@@ -3465,7 +3489,7 @@ def draw_chess(app):
   g = app.game
   flip = app.chess_flip()
   st = current_style()
-  SCREEN.fill(BG_COLOR)
+  draw_background("chess")
 
   title = TITLE_FONT.render("Escacs", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
@@ -3577,7 +3601,7 @@ def go_point_at(pos):
 def draw_go(app):
   g = app.game
   st = current_style()
-  SCREEN.fill(BG_COLOR)
+  draw_background("go")
 
   title = TITLE_FONT.render("Go 9x9", True, TEXT_COLOR)
   SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
@@ -3858,7 +3882,9 @@ def draw_item_visual(tab, key, area, big=False):
   """Vista prèvia d'un element de la botiga dins de 'area'."""
   item = shop_table(tab)[key]
   eq = SAVE["equipped"]
-  if tab == "boards":
+  if tab == "backgrounds":
+    SCREEN.blit(background_surface(SHOP_BG_TARGET, key, area.size), area.topleft)
+  elif tab == "boards":
     draw_shop_scene(area, key, eq["pieces"], eq["marks"])
   elif tab == "pieces":
     draw_shop_scene(area, eq["boards"], key, eq["marks"])
@@ -3883,7 +3909,7 @@ def draw_item_visual(tab, key, area, big=False):
 
 
 def shop_tab_rects():
-  return [(pygame.Rect(23 + i * 110, 100, 104, 40), key, label)
+  return [(pygame.Rect(20 + i * 95, 100, 90, 40), key, label)
           for i, (key, label) in enumerate(SHOP_TABS)]
 
 
@@ -3916,14 +3942,14 @@ def draw_shop_card(rect, tab, key, hover):
   price, orig = price_of(tab, key)
   rar_name, rar_col = rarity(base_price(tab, key))
   owned = is_owned(tab, key)
-  equipped = tab in COSMETIC_TABS and SAVE["equipped"][tab] == key
+  equipped = (SAVE["backgrounds"][SHOP_BG_TARGET] == key if tab == "backgrounds" else tab in COSMETIC_TABS and SAVE["equipped"][tab] == key)
   if tab == "packs":
     locked = not owned and not pack_req(item)[0]
   else:
     locked = tab != "extras" and not owned and not req_check(item.get("req"))[0]
 
   shadow = rect.move(0, 4)
-  pygame.draw.rect(SCREEN, (0, 0, 0, 24), shadow, border_radius=16)
+  pygame.draw.rect(SCREEN, (180, 194, 202), shadow, border_radius=16)
   pygame.draw.rect(SCREEN, (255, 244, 218) if hover else (249, 236, 208),
                    rect, border_radius=16)
   pygame.draw.rect(SCREEN, HIGHLIGHT_COLOR if equipped else (160, 131, 94), rect,
@@ -4040,14 +4066,21 @@ def draw_shop_detail(app):
 
 
 def draw_shop(app):
-  SCREEN.fill((210, 223, 229))
+  draw_background("menu")
   pygame.draw.rect(SCREEN, (236, 244, 247), (18, 18, WIDTH - 36, HEIGHT - 36), border_radius=22)
   pygame.draw.rect(SCREEN, (171, 145, 102), (18, 18, WIDTH - 36, HEIGHT - 36), 2, border_radius=22)
 
   t = BIG_FONT.render("Botiga", True, TEXT_COLOR)
-  SCREEN.blit(t, (42, 28))
-  sub = SMALL.render("Aspectes, efectes i extres", True, SOFT_TEXT)
-  SCREEN.blit(sub, (44, 72))
+  SCREEN.blit(t, (150, 24))
+  if app.shop_tab == "backgrounds":
+    left, right = background_selector_rects()
+    draw_button(left, "<", small=True)
+    draw_button(right, ">", small=True)
+    home_label(BG_TARGETS[SHOP_BG_TARGET], (350, 77), SMALL, TEXT_COLOR)
+    home_label("Aplica a:", (157,77), SMALL, SOFT_TEXT)
+  else:
+    sub = SMALL.render("Aspectes, efectes i extres", True, SOFT_TEXT)
+    SCREEN.blit(sub, (150, 72))
   pts_box = pygame.Rect(WIDTH - 214, 28, 170, 38)
   pygame.draw.rect(SCREEN, (252, 239, 206), pts_box, border_radius=19)
   pygame.draw.circle(SCREEN, (183,126,41), (pts_box.x + 20, pts_box.centery), 10)
@@ -4298,6 +4331,7 @@ class App:
 
   # ---------- botiga ----------
   def process_shop(self, events):
+    global SHOP_BG_TARGET
     for ev in events:
       if ev.type == pygame.QUIT:
         self.running = False
@@ -4320,6 +4354,13 @@ class App:
         if back_button_rect().collidepoint(ev.pos):
           self.state = "main"
           return
+        if self.shop_tab == "backgrounds":
+          left, right = background_selector_rects()
+          if left.collidepoint(ev.pos) or right.collidepoint(ev.pos):
+            targets = list(BG_TARGETS)
+            SHOP_BG_TARGET = targets[(targets.index(SHOP_BG_TARGET) + (-1 if left.collidepoint(ev.pos) else 1)) % len(targets)]
+            self.shop_msg = None
+            return
         for rect, key, _label in shop_tab_rects():
           if rect.collidepoint(ev.pos):
             self.shop_tab = key
@@ -4348,6 +4389,15 @@ class App:
     """Compra (o equipa) l'element obert a la finestra de detall."""
     item = shop_table(tab)[key]
     price, _orig = price_of(tab, key)
+    if tab == "backgrounds":
+      if key not in SAVE["owned"][tab]:
+        if SAVE["points"] < price:
+          return self.shop_say(f"Et falten {price - SAVE['points']} punts", False)
+        SAVE["points"] -= price
+        SAVE["owned"][tab].append(key)
+      SAVE["backgrounds"][SHOP_BG_TARGET] = key
+      write_save()
+      return self.shop_say("Fons equipat!")
     if tab == "extras":
       if SAVE["points"] < price:
         return self.shop_say(f"Et falten {price - SAVE['points']} punts", False)
@@ -4837,6 +4887,8 @@ class App:
 
   # ---------- dibuix ----------
   def draw(self):
+    global ACTIVE_BACKGROUND
+    ACTIVE_BACKGROUND = self.kind if self.state in ("modes", "diff", "side", "play", "guide") else "menu"
     if self.state in ("saves", "achievements", "guide"):
       self.draw_extra()
     elif self.state == "play":
@@ -5084,7 +5136,7 @@ def shogi_target(pos,app):
   return None
 
 def draw_shogi(app):
-  g=app.game; SCREEN.fill(BG_COLOR); draw_hud(app)
+  g=app.game; draw_background("shogi"); draw_hud(app)
   t=TITLE_FONT.render('Shogi',True,TEXT_COLOR); SCREEN.blit(t,t.get_rect(center=(350,30)))
   for i,p in enumerate(g.board):
     r,c=divmod(i,9); rect=pygame.Rect(SH_X+c*SH_CELL,SH_Y+r*SH_CELL,SH_CELL,SH_CELL)
@@ -5199,7 +5251,11 @@ def load_slot(app,i):
 # Les demostracions mostren exemples gràfics pas a pas, sense tocar la partida.
 def draw_demo(kind,step,area):
   pygame.draw.rect(SCREEN,(250,235,204),area,border_radius=14)
-  if kind=='c4':
+  if kind=='dino':
+    draw_dino_icon(area)
+    if step==1: pygame.draw.arc(SCREEN,(80,130,80),(area.centerx-70,area.centery-65,140,100),0,math.pi,4)
+    if step==2: home_label('Supera el teu rècord!',(area.centerx,area.y+32),FONT,TEXT_COLOR)
+  elif kind=='c4':
     cell=43; ox=area.centerx-7*cell//2; oy=area.y+10
     pygame.draw.rect(SCREEN,BOARD_BLUE,(ox,oy,7*cell,5*cell),border_radius=9)
     for r in range(5):
@@ -5241,7 +5297,7 @@ def draw_demo(kind,step,area):
     if step in (0,2): pygame.draw.circle(SCREEN,HINT_COLOR,(x+2*d+d//2,y+2*d+d//2),8)
 
 def draw_extra(app):
-  SCREEN.fill(BG_COLOR); draw_button(back_button_rect(),'< Enrere')
+  draw_background(app.kind if app.state == "guide" else "menu"); draw_button(back_button_rect(),'< Enrere')
   if app.state=='saves':
     text_center('Desar partida' if app.save_mode else 'Partides desades',55,TITLE_FONT)
     text_center(f"{sum(x is not None for x in SAVE['slots'])}/10 espais compartits",95)
@@ -5263,7 +5319,7 @@ def draw_extra(app):
       pygame.draw.rect(SCREEN,(188,147,78) if done else (166,145,120),r,2,border_radius=12)
       draw_achievement_medal((63,y+26), key, done)
       title = '???' if hidden and not done else name
-      hintdesc = desc if (done or not hidden) else 'Assoliment secret: aquesta pista et guiarà quan el desbloquegis.'
+      hintdesc = desc
       SCREEN.blit(FONT.render(title,True,TEXT_COLOR),(95,y+6))
       for j,line in enumerate(wrap_text(hintdesc, SMALL, 545)[:2]):
         SCREEN.blit(SMALL.render(line,True,SOFT_TEXT),(95,y+32+j*18))
@@ -5352,6 +5408,7 @@ App.process_promotion=process_promotion
 # Portades incorporades al programa: píxels RGBA comprimits, sense fitxers ni còdecs externs.
 MENU_IMAGE_SIZE = (356, 274)
 MENU_IMAGE_DATA = {
+    "dino": 'eNrt3QXURU9VNnARFRAkBAUDBClBkRQQBSSkwQQFEUVAECklVcRApEQlxMZCRRTEROxAwcAWA7u7Wz/vt35nredd+z+cc+Pt2LPWrHvf+957Ys7MM3ue/ew9//mf/7n6z65du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2rVr165du3bt2vWI6n/913+9Ve12uWTb1M/+4z/+o9uma9euh1rhitr4u91cVT8b2/Hf//3fu3bt2nVtDebO1WDL+Hfj839eom3Slv/2b/+2+td//dfVP/3TP63++Z//efX3f//3q7/9279d/fVf//Xqr/7qr7p27dp1sf7lX/7l3nuYkQpH/vEf/3HClH/5l3+ZMCbY3evyS64dgr9w90//9E9Xv//7v7/6nd/5ndVv/uZvrn7jN35j9du//dt777t27dp1qf76r//6VL1/85vfPNXf+q3fml59Bld+7/d+b/VHf/RHE2bDaPhzUTF55G+0BRz+wz/8w6nN3vKWt6z+/M//fKp/8Ad/sPqzP/uz6TvNV3Tt2nW//MXf/M3fTBjD3mNDew+nf/d3f3eyn9nM+e5F4y6qXawtzFfmLe//93//d9WlS5cuR1n+3//7fxN3AXusvdl/1uj40ouEx1kLwOJ/+Id/mOxhc5TPavm///u/S7x26dKly0EKLEmFx8p///d/TzYzThR/kbW4zy8KHlsXWB9oB2sG81Rjb5cuXY4Tmysmh7vg94NPF8VGdp/WBGxjbYCnSLss4XHarmvXrl13rXO4UtffKr6Cv4+NDJ+qHu6828dsY/eNt+Gva7u4S5cuR20Pz9l4+Zxd/Ku/+qurP/mTP5nW62zki8JX4Gj+4i/+YtKleL/Et6et/u7v/m767q/92q/t1fwdfUvXrl27Bh/YuvDVe1gDT2gFYg+Pxf+s1Wlt+fUuEh6bf9jF2su9z5W0ne9+8Ad/8Ort3/7tV5e+9KVXb/d2bze979q1a9elCife9m3fdsKMG93oRqs3vvGNE678z//8zywew+toC9jKF0X3Fr6CLw8ex5c3h8cK3H6bt3mbrl27dt25wmSvX/mVXznhCYyds5HhMftY5du6SDEhm/BYWwWPabfNd9r0Hd7hHVYPeMADVs9+9rNXn//5n7965jOf2bVr1657FS4861nPWj3iEY9YXelKV1pd6lKXmjD5a7/2a/e0FEv8KM1b8Hgulvoi28eZv+CxtQc8vvzlL7/6ru/6rnZOdOnSZW35uZ/7udV7vud77tnJX/M1X7PHV6zDYzWat4vCH+8Xj69whSusvu3bvm2Pm1dbz9O1624142a/42fT78b/7/r9Tcda93146/WnfuqnGo+PwT7+9m//9kvoL7p27bp9ndPfVp3unC5sm2PN1XGMrjt3MHbd8YPFVScxd07l9a9/fePxEePxO77jO66+4zu+o2P5unTZpwa34uRcrpiKhSPGzWFYjeVair+ov6/HnDtuxdZqx6/z+Vc8yDF/+qd/evUe7/EejceNx126nNpS7VFjyFiUx0v+M3FpS/au78Mp1W+iU6iYGiyGZY7nu8b3aL9WDH/DG96wes1rXrN63eteN8WHjWvfYK4ckL7z2te+dvWTP/mTk89tjFNoPG487tLlrNnIwURagxe/+MWrD/uwD1vd/va3X33cx33clOO26nSDXz5//OMfv7rf/e43xQO86EUveqsYt2DnD/3QD60+9mM/dnXPe95zdbe73W3icqNtCM7C/l/+5V9ePeMZz1g96EEPWl33utdd3eY2t5lyKIy2t1jeH/3RH1097nGPm671yle+8urzPu/z9s5XbfrG49OFx3Wd05jdpcv8Gl/c2pOe9KQJ59ilL3jBC1aXu9zlVg9+8IP3YmaDbd/6rd+6et7znjflpoShH/7hH7662tWutqd1yvf8juaMvQvXvud7vmd17Wtfe/WBH/iBU/73nF99/vOfv/qoj/qoCWuVV7ziFaurXOUq02di5GC347Kz4fUXf/EXT9+DHQ9/+MNXV73qVVcve9nLpnPO8ceNx8ePx+N6aq6tM8dXbmtcM3XpclFsYwXGwb1rXvOa0xgMTn3WZ33WNMY+4iM+YvULv/AL0+fwGqbCxBQxbB/0QR+0us51rjPhtPHs9895znMmze83fuM37n0XZsPuO97xjnv4/TM/8zOrd3mXd1nd7na3m8Z3xvCTn/zkaZzf8pa3nGKflc/+7M+eNMRiDnL9f/zHf7y69a1vPV3rZ37mZ0640nh8OvA48z0+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',
     'c4': (
         'eNrsXQV8VFf2fm+iEBJCkLjrzERwd3fXQnEtdXdaui7d2ta2W922tKUCdUqFCnU3oJBkJDNRKv/dbrtt8v3POfdNMqSBJhBgAu/9'
         'fvcXm8y88+693/nOuUc0zbzMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zMy7zM'
@@ -15765,35 +15822,43 @@ def draw_dino_icon(area):
 
 
 def home_cover(key, area):
-  pygame.draw.rect(SCREEN, (242, 223, 186), area, border_radius=12)
-  if key == 'dino':
-    draw_dino_icon(area)
-    return
+  pygame.draw.rect(SCREEN, (242,223,186), area, border_radius=12)
   if key in MENU_IMAGE_DATA:
-    cachekey = (key, area.size)
-    if cachekey not in _MENU_IMAGE_CACHE:
-      try:
-        raw = zlib.decompress(base64.b64decode(MENU_IMAGE_DATA[key]))
-        im = pygame.image.load(io.BytesIO(raw)).convert_alpha()
-        iw, ih = im.get_size(); aw, ah = area.size
-        if key == 'c4':
-          f = min((aw - 10) / iw, (ah - 10) / ih)
-        else:
-          f = max(aw / iw, ah / ih)
-        w, h = max(1, round(iw * f)), max(1, round(ih * f))
-        im = pygame.transform.smoothscale(im, (w, h))
-        tile = pygame.Surface(area.size, pygame.SRCALPHA)
-        tile.blit(im, ((aw - w) // 2, (ah - h) // 2))
-        mask = pygame.Surface(area.size, pygame.SRCALPHA)
-        pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(), border_radius=12)
-        tile.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        _MENU_IMAGE_CACHE[cachekey] = tile
-      except Exception:
-        _MENU_IMAGE_CACHE[cachekey] = None
-    image = _MENU_IMAGE_CACHE[cachekey]
-    if image is not None:
-      SCREEN.blit(image, area.topleft); return
-  draw_menu_icon(key, area.inflate(-10, -10))
+    ck = (key, area.size)
+    if ck not in _MENU_IMAGE_CACHE:
+      image = None
+      names = {"c4":("c4.png",), "chess":("chess.jpg","chess.png"), "go":("go.jpg","go.png"), "shogi":("shogi.jpg","shogi.png"), "dino":("dino.png","dino.jpg")}
+      for root in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
+        for name in names.get(key, ()):
+          try:
+            image = pygame.image.load(os.path.join(root,"assets","menu",name)).convert_alpha()
+            break
+          except (OSError, pygame.error):
+            pass
+        if image is not None: break
+      if image is None:
+        try:
+          raw = zlib.decompress(base64.b64decode(MENU_IMAGE_DATA[key]))
+          image = pygame.image.fromstring(raw, MENU_IMAGE_SIZE, "RGBA").convert_alpha()
+        except Exception as exc:
+          print("Portada", key, exc)
+      if image is not None:
+        iw,ih=image.get_size(); aw,ah=area.size
+        f=min((aw-8)/iw,(ah-8)/ih) if key in ("c4","dino") else max(aw/iw,ah/ih)
+        w,h=max(1,round(iw*f)),max(1,round(ih*f))
+        tile=pygame.Surface(area.size,pygame.SRCALPHA)
+        tile.blit(pygame.transform.smoothscale(image,(w,h)),((aw-w)//2,(ah-h)//2))
+        mask=pygame.Surface(area.size,pygame.SRCALPHA)
+        pygame.draw.rect(mask,(255,255,255,255),mask.get_rect(),border_radius=12)
+        tile.blit(mask,(0,0),special_flags=pygame.BLEND_RGBA_MULT)
+        _MENU_IMAGE_CACHE[ck]=tile
+      else:
+        _MENU_IMAGE_CACHE[ck]=None
+    if _MENU_IMAGE_CACHE[ck] is not None:
+      SCREEN.blit(_MENU_IMAGE_CACHE[ck],area.topleft)
+      return
+  if key=="dino": draw_dino_icon(area)
+  else: draw_menu_icon(key,area.inflate(-10,-10))
 
 
 def home_tool_icon(key, center, color, size=54):
@@ -15824,8 +15889,8 @@ def home_tool_icon(key, center, color, size=54):
 
 
 def draw_home_menu(app, opts, mouse):
-  SCREEN.fill((213, 226, 233))
-  pygame.draw.rect(SCREEN, (235, 243, 247), (0, 0, WIDTH, 130))
+  draw_background("menu")
+  pygame.draw.rect(SCREEN, background_palette("menu")[0], (0, 0, WIDTH, 130))
   pygame.draw.rect(SCREEN, (191, 166, 122), (0, 128, WIDTH, 3))
   ink=(60,46,34); muted=(104,87,68); gold=(183,126,41)
   home_label('RATLLA', (350, 42), BIG_FONT, ink)
@@ -15841,7 +15906,7 @@ def draw_home_menu(app, opts, mouse):
     r = rects[key]
     hover = r.collidepoint(mouse)
     shadow = r.move(0, 5)
-    pygame.draw.rect(SCREEN, (0, 0, 0, 28), shadow, border_radius=18)
+    pygame.draw.rect(SCREEN, (154, 171, 181), shadow, border_radius=18)
     pygame.draw.rect(SCREEN, (252, 238, 209) if hover else (246, 232, 204), r, border_radius=18)
     pygame.draw.rect(SCREEN, gold if hover else (157, 127, 88), r, 3 if hover else 2, border_radius=18)
     area = pygame.Rect(r.x + 11, r.y + 11, r.w - 22, 104)
@@ -15916,7 +15981,7 @@ def draw_achievement_medal(center, key, done):
 
 def draw_dino(app):
   g = app.game
-  SCREEN.fill((237, 246, 248))
+  draw_background("dino")
   for i, ox in enumerate((90, 260, 480)):
     y = 95 + i * 18
     pygame.draw.ellipse(SCREEN, (255,255,255), (ox, y, 95, 26))
@@ -15998,6 +16063,71 @@ class DinoRun:
         self.winner = True
         break
 
+
+# Fons independents dels taulers i les fitxes. Els patrons es calculen una vegada.
+ACTIVE_BACKGROUND = "menu"
+FRAME_COLOR = (213,226,233)
+_BROWSER_FRAME = None
+_BACKGROUND_CACHE = {}
+
+def background_selector_rects():
+  return pygame.Rect(222,61,34,32), pygame.Rect(444,61,34,32)
+
+def background_palette(target, key=None):
+  key = key if key is not None else SAVE["backgrounds"].get(target,"auto")
+  if key == "auto" or key not in BACKGROUND_THEMES:
+    return BACKGROUND_DEFAULTS.get(target,BACKGROUND_DEFAULTS["menu"])
+  item=BACKGROUND_THEMES[key]
+  return (*item["palette"],item["motif"])
+
+def background_surface(target, key=None, size=(WIDTH,HEIGHT)):
+  key=key if key is not None else SAVE["backgrounds"].get(target,"auto")
+  ck=(target,key,size)
+  if ck in _BACKGROUND_CACHE: return _BACKGROUND_CACHE[ck]
+  top,bottom,accent,motif=background_palette(target,key)
+  w,h=size; surf=pygame.Surface(size)
+  for y in range(h):
+    k=y/max(1,h-1)
+    pygame.draw.line(surf,tuple(round(a+(b-a)*k) for a,b in zip(top,bottom)),(0,y),(w,y))
+  layer=pygame.Surface(size,pygame.SRCALPHA)
+  c=(*accent,38)
+  step=max(12,w//14)
+  if motif=="grid":
+    for x in range(-h,w,step*2):
+      pygame.draw.line(layer,c,(x,0),(x+h,h),1)
+      pygame.draw.line(layer,c,(x+w,0),(x+w-h,h),1)
+  elif motif=="dots" or motif=="stars":
+    for j,y in enumerate(range(step//2,h,step)):
+      for x in range(step//2+(j%2)*step//2,w,step):
+        pygame.draw.circle(layer,c,(x,y),max(1,step//12))
+        if motif=="stars" and (x+y)%3==0: pygame.draw.line(layer,c,(x-3,y),(x+3,y),1)
+  elif motif=="waves":
+    for j,y in enumerate(range(0,h+step,step)):
+      for x in range(-step+(j%2)*step//2,w,step):
+        pygame.draw.arc(layer,c,(x,y,step,step),0,math.pi,1)
+  elif motif=="leaves":
+    for j,y in enumerate(range(step//2,h,step*2)):
+      for x in range(step//2+(j%2)*step,w,step*2):
+        pygame.draw.ellipse(layer,c,(x,y,max(5,step//2),max(3,step//5)),1)
+        pygame.draw.line(layer,c,(x,y+step//5),(x+step//2,y),1)
+  else:
+    for i in range(3):
+      yy=int(h*(.67+i*.11)); pts=[(0,h)] + [(x, int(yy+math.sin(x/max(1,w)*7+i)*h*.065)) for x in range(0,w+max(1,w//20),max(1,w//20))] + [(w,h)]
+      pygame.draw.polygon(layer,(*accent,20+i*9),pts)
+  surf.blit(layer,(0,0)); _BACKGROUND_CACHE[ck]=surf
+  return surf
+
+def draw_background(target):
+  global FRAME_COLOR,_BROWSER_FRAME
+  surf=background_surface(target)
+  SCREEN.blit(surf,(0,0))
+  FRAME_COLOR=background_palette(target)[1]
+  if HAS_JS and FRAME_COLOR != _BROWSER_FRAME:
+    try:
+      col='#%02x%02x%02x'%FRAME_COLOR
+      js.window.eval("document.documentElement.style.setProperty('background','%s','important');document.body.style.setProperty('background','%s','important');"%(col,col))
+      _BROWSER_FRAME=FRAME_COLOR
+    except Exception: pass
 
 async def main():
   clock = pygame.time.Clock()
