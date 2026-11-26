@@ -16170,7 +16170,7 @@ class DinoRun:
       self.pickups.append({'kind':'shield' if self.waves%10==5 else 'magnet','x':float(WIDTH+155),'y':float(self.ground-30)})
 
   def step(self):
-    self.move_count+=1; self.seconds=self.move_count/60.; self.speed=5.8+min(6.0,self.seconds*.105)
+    self.move_count+=1; self.seconds=self.move_count/60.; meters=self.distance/18.; self.speed=5.8+min(8.4,meters*.018+self.seconds*.06)
     self.distance+=self.speed; self.warning=max(0,self.warning-1)
     self.duck_timer=max(0,self.duck_timer-1); self.invuln=max(0,self.invuln-1); self.magnet=max(0,self.magnet-1); self.notice_timer=max(0,self.notice_timer-1)
     # Plataformes unidireccionals: es travessen de baix cap amunt,
@@ -16210,7 +16210,7 @@ class DinoRun:
         self.hit=DINO_LABELS[h['type']]; self.winner=True; break
       if not h.get('passed',False) and ((h['vx']<0 and h['x']+h['w']<DINO_X-16) or (h['vx']>0 and h['x']>DINO_X+72)):
         self.cleared+=1; h['passed']=True
-        if h['type'] in ('tall_spire','thorn_wall'): self.high_cleared+=1
+        if h['type'] in ('tall_spire','thorn_wall','upper_spike','upper_totem'): self.high_cleared+=1
       if (h['vx']<0 and h['x']+h['w']<-35) or (h['vx']>0 and h['x']>WIDTH+35): self.hazards.remove(h)
     for p in self.pickups[:]:
       p['x']-=self.speed
@@ -16632,8 +16632,8 @@ _DINO_SKINS = [('Verd clàssic',0,(72,126,92)),('Ambre',200,(192,118,56)),('Glac
 _DINO_TASKS = [('temps', 'Aguanta 30 segons',30),('coins','Recull 12 monedes',12),('cleared','Esquiva 8 obstacles',8)]
 DINO_HAZARDS.update(tumble=(38,38), arch=(82,36), crystal=(35,47), drone=(47,24))
 DINO_LABELS.update(tumble='Planta rodolant',arch='Barrera baixa',crystal='Cristall',drone='Robot volador')
-DINO_HAZARDS.update(tall_spire=(38,181),thorn_wall=(50,176))
-DINO_LABELS.update(tall_spire='Pilar de pedra',thorn_wall='Mur d’espines')
+DINO_HAZARDS.update(tall_spire=(38,181),thorn_wall=(50,176),upper_spike=(36,42),upper_totem=(34,58))
+DINO_LABELS.update(tall_spire='Pilar de pedra',thorn_wall='Mur d’espines',upper_spike='Púes del pont',upper_totem='Tòtem del pont')
 DINO_STAGES += (
  ('Selva',(103,173,143),(225,240,188),(81,128,99),(48,102,77),(125,158,92),(56,82,61)),
  ('Glacera',(139,183,216),(242,249,248),(129,165,190),(107,148,175),(214,230,234),(76,112,135)),
@@ -16703,13 +16703,29 @@ class DinoRun(_DinoBase):
     if self.seconds>=8 and (self.waves+1)%5==0:
       self.waves+=1; self.last_kind='platform'
       x=float(WIDTH+12); y=self.ground-172; speed=self.speed
-      self.platforms.append({'x':x,'y':y,'w':490,'speed':speed})
-      # Un únic cactus inferior, prou separat de l'entrada del pont.
-      w,h=DINO_HAZARDS['cactus']
-      self.hazards.append({'type':'cactus','x':x+255,'y':float(self.ground-h),'w':w,'h':h,'vx':-speed,'warn':0})
-      for i in range(7):
-        self.pickups.append({'kind':'coin','x':x+85+i*53,'y':float(y-26)})
-      self.notice='Dos carrils · doble salt per pujar'; self.notice_timer=150
+      long_bridge=self.seconds>=24 and random.random()<.55
+      width=760 if long_bridge else 520
+      self.platforms.append({'x':x,'y':y,'w':width,'speed':speed,'long':long_bridge})
+      # Carril inferior: obstacles espaiats perquè segueixi sent una ruta segura.
+      lower_pattern=['cactus'] if not long_bridge else ['cactus','rock']
+      lower_offsets=[255] if not long_bridge else [245, 565]
+      for kind,off in zip(lower_pattern,lower_offsets):
+        w,h=DINO_HAZARDS[kind]
+        self.hazards.append({'type':kind,'x':x+off,'y':float(self.ground-h),'w':w,'h':h,'vx':-speed,'warn':0,'lane':'lower'})
+      # Carril superior: monedes i una o dues trampes pròpies del pont.
+      coin_count=10 if long_bridge else 7
+      spacing=55 if long_bridge else 53
+      for i in range(coin_count):
+        arc=(18 if i%4==1 else 10 if i%4==2 else 0)
+        self.pickups.append({'kind':'coin','x':x+82+i*spacing,'y':float(y-24-arc)})
+      upper_pattern=['upper_spike'] if not long_bridge else ['upper_spike','upper_totem']
+      upper_offsets=[308] if not long_bridge else [300, 590]
+      for kind,off in zip(upper_pattern,upper_offsets):
+        w,h=DINO_HAZARDS[kind]
+        self.hazards.append({'type':kind,'x':x+off,'y':float(y-h),'w':w,'h':h,'vx':-speed,'warn':0,'lane':'upper'})
+        for i in range(3):
+          self.pickups.append({'kind':'coin','x':x+off-26+i*28,'y':float(y-h-32-(10 if i==1 else 0))})
+      self.notice='Pont elevat · doble salt per pujar'; self.notice_timer=155 if long_bridge else 145
       return
     if self.seconds>=12 and (self.waves+1)%4==0:
       self.waves+=1; kind=random.choice(('tall_spire','thorn_wall')); self.last_kind=kind
@@ -16914,8 +16930,10 @@ def draw_dino(app):
   dino_text('DINO RUN',(112,36),TITLE_FONT,(248,221,137)); dino_text(stage,(112,63))
   limit=_DINO_MODES[g.mode_id][1]
   timer=f'{max(0,math.ceil(limit-g.seconds))} s' if limit else f'{g.seconds:.1f} s'
-  for x,label,value in ((315,'PUNTS',str(g.score)),(464,'RESTANTS' if limit else 'TEMPS',timer),(605,'RÈCORD',str(max(g.score,SAVE.get('dino_best',0))))):
+  metres=int(g.distance/18)
+  for x,label,value in ((315,'PUNTS',str(g.score)),(464,'METRES',str(metres)),(605,'RÈCORD',str(max(g.score,SAVE.get('dino_best',0))))):
     dino_text(label,(x,34),SMALL,(171,199,186)); dino_text(value,(x,61),TITLE_FONT)
+  dino_text(('Temps '+timer) if limit else ('Temps '+timer+' · vel. '+format(g.speed/5.8,'.1f')+'x'),(455,95),SMALL,(171,199,186))
   active=[]
   if g.shield: active.append('Escut')
   if g.magnet: active.append(f'Imant {(g.magnet+59)//60}s')
@@ -17368,6 +17386,21 @@ def dino_draw_hazard(h,g):
   r=dino_rect(h); k=h['type']; t=g.move_count
   if k in ('tall_spire','thorn_wall'):
     dino_draw_tall(h,g)
+  elif k=='upper_spike':
+    base=pygame.Rect(r.x+2,r.bottom-10,r.w-4,10)
+    pygame.draw.rect(SCREEN,(93,63,43),base,border_radius=3)
+    for xx in range(r.x+4,r.right-4,8):
+      pygame.draw.polygon(SCREEN,(214,224,214),[(xx,r.bottom-10),(xx+4,r.y+6),(xx+8,r.bottom-10)])
+      pygame.draw.polygon(SCREEN,(112,126,120),[(xx+2,r.bottom-10),(xx+4,r.y+11),(xx+6,r.bottom-10)])
+  elif k=='upper_totem':
+    pygame.draw.rect(SCREEN,(114,79,50),r,border_radius=6)
+    pygame.draw.rect(SCREEN,(156,108,65),r.inflate(-6,-8),border_radius=5)
+    pygame.draw.circle(SCREEN,(68,47,31),(r.centerx,r.y+16),8)
+    pygame.draw.circle(SCREEN,(240,224,176),(r.centerx-3,r.y+14),2)
+    pygame.draw.circle(SCREEN,(240,224,176),(r.centerx+3,r.y+14),2)
+    pygame.draw.line(SCREEN,(68,47,31),(r.centerx-7,r.y+26),(r.centerx+7,r.y+26),3)
+    for yy in range(r.y+34,r.bottom-8,9):
+      pygame.draw.line(SCREEN,(87,60,40),(r.x+6,yy),(r.right-6,yy),2)
   elif k in ('bird','highbird'):
     x,y=r.center; flap=math.sin(t*.24)*13
     pygame.draw.polygon(SCREEN,(48,63,66),[(r.x+2,y),(x-12,y-5),(x+6,y-4),(r.right+5,y-8),(r.right-3,y+5),(x-9,y+9)])
@@ -17392,6 +17425,31 @@ def dino_draw_hazard(h,g):
     w=7+round(7*abs(math.sin(t*.55)))
     for x in (r.x+5,r.right-5): pygame.draw.line(SCREEN,(175,210,215),(x-w,r.y-3),(x+w,r.y-3),2)
     if t%24<12: pygame.draw.circle(SCREEN,(255,230,135),r.center,4)
+  elif k in ('cactus','double_cactus'):
+    bodies=[pygame.Rect(r.x+8,r.y+10,r.w-16,r.h-10)] if k=='cactus' else [pygame.Rect(r.x+2,r.y+15,r.w//2-4,r.h-15), pygame.Rect(r.centerx+2,r.y+4,r.w//2-4,r.h-4)]
+    for b in bodies:
+      pygame.draw.rect(SCREEN,(69,136,78),b,border_radius=6)
+      pygame.draw.rect(SCREEN,(39,88,49),b,2,border_radius=6)
+      pygame.draw.line(SCREEN,(103,170,110),(b.centerx,b.y+4),(b.centerx,b.bottom-5),2)
+      if b.h>24:
+        pygame.draw.line(SCREEN,(39,88,49),(b.x+3,b.y+15),(b.x-6,b.y+5),3)
+        pygame.draw.line(SCREEN,(39,88,49),(b.right-3,b.y+18),(b.right+6,b.y+8),3)
+      for sy in range(b.y+7,b.bottom-3,8):
+        pygame.draw.line(SCREEN,(174,223,156),(b.x+2,sy),(b.x+5,sy+1),1)
+        pygame.draw.line(SCREEN,(174,223,156),(b.right-5,sy),(b.right-2,sy+1),1)
+  elif k=='rock':
+    pts=[(r.x+2,r.bottom-3),(r.x+8,r.y+8),(r.centerx,r.y+1),(r.right-7,r.y+9),(r.right-1,r.bottom-4)]
+    pygame.draw.polygon(SCREEN,(112,104,99),pts)
+    pygame.draw.polygon(SCREEN,(71,67,64),pts,2)
+    pygame.draw.polygon(SCREEN,(163,154,148),[(r.x+10,r.y+10),(r.centerx,r.y+5),(r.centerx-2,r.bottom-6)])
+    pygame.draw.line(SCREEN,(89,80,74),(r.centerx-3,r.y+11),(r.centerx+5,r.bottom-8),2)
+  elif k=='log':
+    pygame.draw.rect(SCREEN,(118,82,48),r,border_radius=8)
+    pygame.draw.rect(SCREEN,(84,58,35),r,2,border_radius=8)
+    pygame.draw.circle(SCREEN,(156,120,79),(r.x+8,r.centery),6,2)
+    pygame.draw.circle(SCREEN,(156,120,79),(r.right-8,r.centery),6,2)
+    for xx in range(r.x+10,r.right-10,11):
+      pygame.draw.line(SCREEN,(145,107,67),(xx,r.y+4),(xx+5,r.bottom-4),2)
   else:
     _dino_anim_old_hazard(h,g)
     if k in ('barrel','orb','tumble'):
@@ -17445,15 +17503,21 @@ def dino_visual_floor(g):
 def dino_draw_platforms(g):
   for p in g.platforms:
     x,y,w=round(p['x']),round(p['y']),p['w']
-    # Pont flotant de fusta amb travessers. No hi ha col·lisió lateral.
-    pygame.draw.rect(SCREEN,(80,55,39),(x,y+7,w,19),border_radius=4)
-    pygame.draw.rect(SCREEN,(158,105,57),(x,y+2,w,17),border_radius=4)
-    for xx in range(x+9,x+w-6,29):
-      pygame.draw.line(SCREEN,(105,68,42),(xx,y+3),(xx,y+18),2)
+    long_bridge=p.get('long',False)
+    pygame.draw.rect(SCREEN,(73,49,35),(x,y+8,w,20),border_radius=4)
+    pygame.draw.rect(SCREEN,(163,111,61),(x,y+2,w,18),border_radius=4)
+    pygame.draw.line(SCREEN,(247,210,137),(x,y+1),(x+w,y+1),4)
+    pygame.draw.line(SCREEN,(105,68,42),(x,y+20),(x+w,y+20),2)
+    for xx in range(x+9,x+w-6,28):
+      pygame.draw.line(SCREEN,(105,68,42),(xx,y+3),(xx,y+19),2)
       pygame.draw.circle(SCREEN,(223,191,128),(xx+6,y+10),2)
-    pygame.draw.line(SCREEN,(242,204,129),(x,y),(x+w,y),4)
-    for xx in range(x+16,x+w-10,92):
-      pygame.draw.polygon(SCREEN,(93,63,43),[(xx,y+25),(xx+23,y+25),(xx+11,y+38)])
+    for xx in range(x+16,x+w-10,88):
+      pygame.draw.polygon(SCREEN,(93,63,43),[(xx,y+26),(xx+24,y+26),(xx+12,y+39)])
+    if long_bridge:
+      for xx in range(x+120,x+w-70,180):
+        pygame.draw.rect(SCREEN,(88,58,39),(xx,y-9,16,11),border_radius=3)
+        pygame.draw.polygon(SCREEN,(228,194,101),[(xx+8,y-44),(xx+8,y-10),(xx+33,y-26)])
+        pygame.draw.line(SCREEN,(70,52,38),(xx+8,y-10),(xx+8,y-44),3)
     if -25<x<WIDTH-36:
       pygame.draw.rect(SCREEN,(37,65,55),(x,y-48,37,36),border_radius=7)
       for yy in (y-36,y-24):
@@ -17463,18 +17527,19 @@ def dino_draw_platforms(g):
 def dino_draw_tall(h,g):
   r=dino_rect(h); x,y,w,ht=r.x,r.y,r.w,r.h
   if h['type']=='tall_spire':
-    pygame.draw.polygon(SCREEN,(79,85,85),[(x,r.bottom),(x+3,y+11),(x+w//2,y),(r.right-2,y+8),(r.right,r.bottom)])
-    pygame.draw.polygon(SCREEN,(155,165,154),[(x+6,r.bottom),(x+8,y+14),(x+w//2,y+3),(x+w//2,r.bottom)])
-    for yy in range(y+23,r.bottom-4,29): pygame.draw.line(SCREEN,(62,73,74),(x+3,yy),(r.right-4,yy+5),2)
+    pygame.draw.polygon(SCREEN,(88,94,94),[(x,r.bottom),(x+3,y+11),(x+w//2,y),(r.right-2,y+8),(r.right,r.bottom)])
+    pygame.draw.polygon(SCREEN,(172,178,168),[(x+6,r.bottom),(x+8,y+14),(x+w//2,y+3),(x+w//2,r.bottom)])
+    pygame.draw.polygon(SCREEN,(121,128,124),[(x+w//2,r.y+4),(r.right-8,y+18),(r.right-4,r.bottom-6),(x+w//2,r.bottom-4)])
+    for yy in range(y+23,r.bottom-4,26): pygame.draw.line(SCREEN,(62,73,74),(x+3,yy),(r.right-4,yy+5),2)
   else:
     pygame.draw.rect(SCREEN,(42,90,54),(x+4,y+8,w-8,ht-8),border_radius=7)
+    pygame.draw.rect(SCREEN,(78,135,89),(x+8,y+13,w-16,ht-18),border_radius=7)
     for xx in (x+13,x+w-14):
       pygame.draw.line(SCREEN,(105,157,78),(xx,y+10),(xx,r.bottom-5),6)
-    for yy in range(y+14,r.bottom-6,20):
+    for yy in range(y+14,r.bottom-6,18):
       pygame.draw.polygon(SCREEN,(59,114,65),[(x+8,yy),(x,yy-7),(x+8,yy+10)])
       pygame.draw.polygon(SCREEN,(59,114,65),[(r.right-8,yy),(r.right,yy-7),(r.right-8,yy+10)])
     for xx in range(x+8,r.right-4,12): pygame.draw.polygon(SCREEN,(42,90,54),[(xx-5,y+12),(xx,y),(xx+6,y+12)])
-  # Dues fletxes, el mateix senyal que al pont, indiquen el doble salt.
   for yy in (y-28,y-15):
     pygame.draw.lines(SCREEN,(255,232,157),False,[(r.centerx-8,yy+5),(r.centerx,yy-3),(r.centerx+8,yy+5)],3)
 
