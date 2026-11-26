@@ -4530,23 +4530,17 @@ class App:
   def finish(self):
     g, kind, mode = self.game, self.kind, self.mode
     if kind == "dino":
-      SAVE["dino_best"] = max(SAVE.get("dino_best", 0), int(getattr(g, "score", 0)))
-      res = dict(title="FI DE LA CURSA", lines=[], color=COLOR_DRAW)
-      res["lines"].append(f"Temps: {g.seconds:.1f} s")
-      res["lines"].append(f"Puntuació: {g.score}")
-      res["lines"].append(f"Rècord: {SAVE['dino_best']}")
-      if g.score >= 500:
-        res["lines"].append("Gran partida! Ja domines prou bé el ritme.")
-      elif g.score >= 250:
-        res["lines"].append("Molt bé. Cada salt surt més fi.")
-      else:
-        res["lines"].append("Torna-hi: aguanta més i llegeix millor les distàncies.")
-      self.result = res
+      if g.rewarded: return
+      g.rewarded=True
+      best=SAVE.get("dino_best",0)
+      SAVE["dino_best"]=max(best,g.score)
+      reward=g.reward(); SAVE["points"]+=reward
+      SAVE["unlocked"]=SAVE["points"]>=UNLOCK_POINTS
+      self.result=dict(title="NOU RÈCORD!" if g.score>best else "FI DE LA CURSA",color=COLOR_WIN if g.score>best else COLOR_DRAW,
+        lines=[f"Temps: {g.seconds:.1f} s  ·  Punts: {g.score}",f"Monedes: {g.coins}  ·  Obstacles: {g.cleared}",f"Rècord: {SAVE['dino_best']}  ·  Botiga: +{reward}",f"Obstacle: {g.hit}"])
       if self.slot is not None:
-        SAVE["slots"][self.slot] = None
-        self.slot = None
-      write_save()
-      return
+        SAVE["slots"][self.slot]=None; self.slot=None
+      write_save(); return
     winner, draw = g.winner, g.draw
     res = dict(title="", lines=[], color=COLOR_DRAW)
     lines = res["lines"]
@@ -4761,6 +4755,9 @@ class App:
       self.hint = None
 
   def process_play(self, events):
+    if self.kind == "dino":
+      process_dino(self, events)
+      return
     for ev in events:
       if ev.type == pygame.KEYDOWN:
         k = ev.key
@@ -4859,12 +4856,9 @@ class App:
       return
     g = self.game
     if self.kind == "dino":
-      g.update()
+      g.update(getattr(self, "frame_dt", 1/60))
       if g.winner and self.result is None:
-        if self.over_time is None:
-          self.over_time = time.time()
-        elif time.time() - self.over_time > 0.35:
-          self.finish()
+        self.finish()
       return
     if self.mode == "online":
       remote = check_firebase_state()
@@ -5300,7 +5294,7 @@ GUIDES={
  'chess':[('Peces','El peó avança i captura en diagonal; el cavall salta en L.'),('Escac','Torre: rectes. Alfil: diagonals. Dama: totes dues. Rei: un pas.'),('Mat i coronació','Protegeix el rei; guanya amb escac i mat. Corona el peó a dama, torre, alfil o cavall. L’enroc protegeix el rei si no s’han mogut el rei i la torre i no hi ha escac ni caselles atacades.')],
  'go':[('Llibertats','Col·loca pedres en interseccions. Els punts buits adjacents són llibertats.'),('Captura','Envolta un grup rival sense deixar-li llibertats per retirar-lo.'),('Territori','Passa si no vols jugar. Dos passis seguits acaben i es compta l’àrea; blanques +7,5.')],
  'shogi':[('Moviments','P: un pas endavant. L: recta endavant. C: salta dues files endavant i una columna. S: diagonals o un pas endavant. O: tres direccions endavant, costats o un pas recte enrere. A: diagonals. T: rectes. R: un pas en qualsevol direcció.'),('Promoció','En entrar, sortir o moure dins les tres files rivals, pots promocionar. Peó, llança, cavall i plata es mouen com l’or; alfil i torre guanyen passos de rei. + indica promoció.'),('Captures i mà','Les peces capturades tornen a la teva mà. Clica una peça de la mà i una casella lliure. No pots duplicar peons a una columna.'),('Objectiu','Evita l’escac i fes mat al rei rival. Or i rei no promocionen.')],
- 'dino':[('Salt','Prem espai, W, fletxa amunt o fes clic per saltar.'),('Obstacles','Esquiva cactus, roques, bidons, ocells, jeeps i fins i tot bales que van d\'esquerra a dreta.'),('Objectiu','Com més segons aguantis, més punts guanyaràs i més ràpid anirà la cursa.')]
+ 'dino':[('Controls','Espai, W o fletxa amunt: salta. Torna a prémer a l’aire per fer un doble salt. S o fletxa avall: ajup-te. P: pausa. També hi ha botons tàctils.'),('Obstacles','Salta cactus, roques, bidons, troncs i jeeps. Ajup-te sota els ocells baixos. L’avís de l’esquerra anuncia una esfera rebotant.'),('Punts i ajudes','10 punts per segon, 20 per moneda. L’escut atura un impacte; l’imant atrau monedes durant 8 segons. En acabar guanyes 1 punt de botiga per cada 5 segons i cada 3 monedes.')]
 }
 
 def text_center(txt,y,font=FONT,color=None):
@@ -5326,6 +5320,7 @@ def load_slot(app,i):
   try:
     game={'morris':Morris,'c4':Connect4,'chess':Chess,'go':Go,'shogi':Shogi,'dino':DinoRun}[slot['kind']]()
     game.__dict__.update(decode_state(slot['game']))
+    if slot['kind']=='dino': game.migrate()
     app.kind=slot['kind']; app.mode=slot['mode']; app.difficulty=slot['difficulty']; app.human_first=slot['human_first']
     app.start_game(); app.game=game; app.slot=i; app.assisted=slot['assisted']; app.hinted=slot['hinted']; app.reset_view()
   except (ValueError,KeyError,TypeError,AttributeError): return
@@ -5336,7 +5331,7 @@ def draw_demo(kind,step,area):
   if kind=='dino':
     draw_dino_icon(area)
     if step==1: pygame.draw.arc(SCREEN,(80,130,80),(area.centerx-70,area.centery-65,140,100),0,math.pi,4)
-    if step==2: home_label('Supera el teu rècord!',(area.centerx,area.y+32),FONT,TEXT_COLOR)
+    if step==2: home_label('Recull monedes i supera el rècord!',(area.centerx,area.y+32),FONT,TEXT_COLOR)
   elif kind=='c4':
     cell=43; ox=area.centerx-7*cell//2; oy=area.y+10
     pygame.draw.rect(SCREEN,BOARD_BLUE,(ox,oy,7*cell,5*cell),border_radius=9)
@@ -15848,7 +15843,7 @@ MENU_IMAGE_DATA = {
 }
 
 _MENU_IMAGE_CACHE = {}
-HOME_DESCRIPTIONS = {"morris":"Tres quadrats", "c4":"Connecta quatre", "chess":"Escac i mat", "go":"Domina el territori", "shogi":"Escacs japonesos", "dino":"Sense connexió"}
+HOME_DESCRIPTIONS = {"morris":"Tres quadrats", "c4":"Connecta quatre", "chess":"Escac i mat", "go":"Domina el territori", "shogi":"Escacs japonesos", "dino":"Arcade de supervivència"}
 HOME_TITLES = {"morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go 9 × 9", "shogi":"Shogi", "dino":"Dino Run"}
 HOME_TOOLS = {"shop":"Botiga", "settings":"Configuració", "saves":"Partides", "achievements":"Assoliments"}
 
@@ -16069,216 +16064,363 @@ def draw_achievement_medal(center, key, done):
     pygame.draw.arc(SCREEN, ink, (cx-7, cy-2, 14, 12), math.pi, 2*math.pi, 2)
 
 
-def dino_hazard_rect(h):
-  return pygame.Rect(int(h['x']), int(h['y']), int(h['w']), int(h['h']))
+# ---------------------------------------------------------------
+# DINO RUN: SAVANNA ADVENTURE — arcade, 60 passos físics/segon
+# ---------------------------------------------------------------
+DINO_GROUND=550
+DINO_X=125
+DINO_STEP=1/60
+DINO_HAZARDS={
+ 'cactus':(26,57), 'double_cactus':(56,64), 'rock':(43,28),
+ 'barrel':(34,34), 'bird':(56,25), 'jeep':(96,49),
+ 'orb':(25,25), 'log':(68,26), 'highbird':(55,25),
+}
+DINO_LABELS={'cactus':'Cactus','double_cactus':'Grup de cactus','rock':'Roca',
+ 'barrel':'Bidó rodolant','bird':'Ocell baix','jeep':'Jeep','orb':'Esfera rebotant',
+ 'log':'Tronc caigut','highbird':'Ocell alt'}
+DINO_STAGES=(('Sabana',(247,207,140),(254,238,190),(182,127,80),(132,117,76),(212,166,92),(130,85,53)),
+ ('Canyó',(211,133,116),(255,202,149),(157,91,83),(188,113,79),(201,132,77),(120,72,53)),
+ ('Nit estrellada',(30,47,76),(91,117,151),(63,78,112),(78,94,119),(128,119,106),(65,65,83)))
+_DINO_SKY={}
 
-
-def draw_savannah_vehicle(rect):
-  pygame.draw.rect(SCREEN, (153, 96, 50), rect, border_radius=6)
-  cab = pygame.Rect(rect.x + rect.w * 0.55, rect.y + 4, rect.w * 0.24, rect.h * 0.45)
-  pygame.draw.rect(SCREEN, (208, 196, 172), cab, border_radius=3)
-  pygame.draw.rect(SCREEN, (89, 97, 103), (rect.x + 8, rect.y + rect.h - 10, rect.w - 16, 8), border_radius=4)
-  for wx in (rect.x + 16, rect.right - 16):
-    pygame.draw.circle(SCREEN, (45, 45, 45), (wx, rect.bottom - 2), 8)
-    pygame.draw.circle(SCREEN, (177, 177, 177), (wx, rect.bottom - 2), 3)
-
-
-def draw_dino_hazard(h):
-  r = dino_hazard_rect(h)
-  kind = h['type']
-  if kind == 'cactus':
-    pygame.draw.rect(SCREEN, (54, 122, 71), r, border_radius=4)
-    pygame.draw.rect(SCREEN, (37, 90, 51), r, 2, border_radius=4)
-    pygame.draw.line(SCREEN, (37,90,51), (r.x + r.w//3, r.y + 12), (r.x + r.w//3, r.y - 8), 3)
-    pygame.draw.line(SCREEN, (37,90,51), (r.right - r.w//3, r.y + 14), (r.right - r.w//3, r.y), 3)
-  elif kind == 'double_cactus':
-    left = pygame.Rect(r.x, r.y + 8, r.w//2 - 2, r.h - 8)
-    right = pygame.Rect(r.centerx, r.y, r.w//2, r.h)
-    for part in (left, right):
-      pygame.draw.rect(SCREEN, (52, 126, 72), part, border_radius=4)
-      pygame.draw.rect(SCREEN, (35, 90, 52), part, 2, border_radius=4)
-  elif kind == 'rock':
-    pts = [(r.x + 2, r.bottom - 2), (r.x + 7, r.y + 6), (r.centerx, r.y), (r.right - 5, r.y + 8), (r.right - 1, r.bottom - 3)]
-    pygame.draw.polygon(SCREEN, (117, 108, 102), pts)
-    pygame.draw.polygon(SCREEN, (72, 66, 63), pts, 2)
-  elif kind == 'barrel':
-    pygame.draw.ellipse(SCREEN, (132, 90, 48), r)
-    pygame.draw.ellipse(SCREEN, (90, 58, 28), r, 2)
-    for off in (0.28, 0.5, 0.72):
-      x = int(r.x + r.w * off)
-      pygame.draw.line(SCREEN, (79, 48, 24), (x, r.y + 3), (x, r.bottom - 3), 2)
-  elif kind == 'bird':
-    pygame.draw.ellipse(SCREEN, (48, 48, 48), (r.x + 8, r.y + 7, r.w - 16, r.h - 12))
-    pygame.draw.polygon(SCREEN, (48,48,48), [(r.x + 8, r.y + r.h//2), (r.x - 8, r.y + r.h//2 - 7), (r.x + 6, r.y + r.h//2 + 1)])
-    pygame.draw.polygon(SCREEN, (48,48,48), [(r.right - 7, r.y + r.h//2), (r.right + 11, r.y + r.h//2 - 3), (r.right - 4, r.y + r.h//2 + 4)])
-    pygame.draw.arc(SCREEN, (30,30,30), (r.x + 2, r.y, r.w//2, r.h), 2.8, 6.1, 2)
-    pygame.draw.arc(SCREEN, (30,30,30), (r.centerx - 3, r.y, r.w//2, r.h), 3.6, 0.4, 2)
-  elif kind == 'jeep':
-    draw_savannah_vehicle(r)
-  elif kind == 'bullet':
-    pygame.draw.rect(SCREEN, (110, 82, 54), (10, r.y + 12, 22, 42), border_radius=4)
-    pygame.draw.circle(SCREEN, (224, 198, 142), (21, r.y + 6), 10)
-    pygame.draw.line(SCREEN, (110,82,54), (27, r.y + 22), (51, r.y + 14), 4)
-    pygame.draw.ellipse(SCREEN, (60, 60, 60), r)
-    pygame.draw.ellipse(SCREEN, (255, 247, 181), (r.x - 10, r.y + 2, 10, r.h - 4))
-
-
-def draw_dino_player(g):
-  r = g.player_rect()
-  body_col = (43, 43, 43)
-  hi = (84, 84, 84)
-  body = pygame.Rect(r.x + 6, r.y + 13, 36, 22)
-  head = pygame.Rect(r.x + 22, r.y + 1, 18, 16)
-  pygame.draw.ellipse(SCREEN, body_col, body)
-  pygame.draw.ellipse(SCREEN, body_col, head)
-  pygame.draw.polygon(SCREEN, body_col, [(body.x + 3, body.y + 5), (r.x - 10, r.y + 8), (body.x + 4, body.y + 14)])
-  pygame.draw.line(SCREEN, body_col, (body.x + 8, body.bottom - 1), (body.x + 6, body.bottom + 14), 4)
-  pygame.draw.line(SCREEN, body_col, (body.x + 24, body.bottom - 1), (body.x + 28, body.bottom + 14), 4)
-  pygame.draw.line(SCREEN, body_col, (body.right - 4, body.y + 6), (body.right + 10, body.y + 9), 3)
-  pygame.draw.line(SCREEN, body_col, (body.right - 7, body.y + 11), (body.right + 11, body.y + 14), 3)
-  pygame.draw.arc(SCREEN, body_col, (r.x + 8, r.y + 22, 26, 26), 1.2, 4.8, 3)
-  pygame.draw.circle(SCREEN, (245,245,245), (head.x + 11, head.y + 6), 2)
-  pygame.draw.circle(SCREEN, hi, (body.x + 22, body.y + 9), 4)
-  return r
-
-
-def draw_dino(app):
-  g = app.game
-  draw_background("dino")
-  # cel i decoració
-  pygame.draw.circle(SCREEN, (255, 214, 98), (575, 105), 42)
-  pygame.draw.circle(SCREEN, (255, 235, 160), (575, 105), 48, 3)
-  for i, ox in enumerate((80, 255, 455)):
-    y = 96 + i * 20
-    pygame.draw.ellipse(SCREEN, (255,255,255,220), (ox, y, 95, 24))
-    pygame.draw.ellipse(SCREEN, (255,255,255,220), (ox + 30, y - 13, 54, 28))
-  # muntanyes i dunes
-  for color, pts in [((173, 138, 96), [(0, 445), (110, 365), (225, 445), (350, 335), (510, 445), (700, 445), (700, 750), (0, 750)]),
-                     ((205, 169, 116), [(0, 500), (160, 430), (300, 500), (470, 420), (700, 500), (700, 750), (0, 750)]),
-                     ((231, 198, 140), [(0, 565), (160, 520), (330, 560), (510, 510), (700, 560), (700, 750), (0, 750)])]:
-    pygame.draw.polygon(SCREEN, color, pts)
-  # arbres llunyans
-  for tx in (70, 230, 520, 620):
-    pygame.draw.line(SCREEN, (104, 81, 48), (tx, 480), (tx, 447), 3)
-    pygame.draw.ellipse(SCREEN, (95, 126, 65), (tx - 18, 432, 36, 18))
-    pygame.draw.ellipse(SCREEN, (95, 126, 65), (tx - 9, 418, 18, 18))
-  pygame.draw.line(SCREEN, (153, 135, 103), (0, g.ground + 36), (WIDTH, g.ground + 36), 3)
-  for x in range(0, WIDTH, 26):
-    pygame.draw.line(SCREEN, (194, 174, 139), (x, g.ground + 44), (x + 12, g.ground + 44), 2)
-  for h in g.hazards:
-    draw_dino_hazard(h)
-  draw_dino_player(g)
-  home_label('Dino Run', (WIDTH//2, 30), TITLE_FONT, TEXT_COLOR)
-  s1 = FONT.render(f'Puntuació: {g.score}', True, TEXT_COLOR)
-  s2 = SMALL.render(f'Temps: {g.seconds:.1f}s  ·  Rècord: {SAVE.get("dino_best",0)}', True, SOFT_TEXT)
-  SCREEN.blit(s1, (WIDTH - 30 - s1.get_width(), 20))
-  SCREEN.blit(s2, (WIDTH - 30 - s2.get_width(), 48))
-  t = SMALL.render('Espai / W / ↑ / clic per saltar · aguanta més temps per sumar més punts', True, SOFT_TEXT)
-  SCREEN.blit(t, (24, 24))
-  legend = SMALL.render('Trampes: cactus, doble cactus, roca, bidó, ocell, jeep i bala', True, SOFT_TEXT)
-  SCREEN.blit(legend, (24, 50))
-  draw_footer(app)
-
+def dino_rect(h):
+  return pygame.Rect(round(h['x']),round(h['y']),h['w'],h['h'])
 
 class DinoRun:
   def __init__(self):
-    self.ground = 560
-    self.y = self.ground
-    self.vy = 0.0
-    self.gravity = 0.92
-    self.jump_force = -15.3
-    self.hazards = []
-    self.obstacles = self.hazards
-    self.score = 0
-    self.speed = 8.0
-    self.spawn_cd = 55
-    self.winner = None
-    self.draw = False
-    self.move_count = 0
-    self.last_move = None
-    self.stack = []
-    self.seconds = 0.0
+    self.version=3
+    self.ground=DINO_GROUND; self.y=float(self.ground); self.vy=0.
+    self.gravity=.83; self.jump_force=-15.6; self.jumps=0
+    self.hazards=[]; self.pickups=[]; self.coins=0; self.score=0
+    self.speed=5.8; self.spawn_cd=65; self.move_count=0; self.seconds=0.
+    self.distance=0.; self.accum=0.; self.waves=0; self.warning=0
+    self.shield=False; self.magnet=0; self.invuln=0; self.duck=False; self.duck_timer=0
+    self.started=False; self.paused=False; self.winner=None; self.draw=False
+    self.last_move=None; self.stack=[]; self.hit=''; self.cleared=0; self.rewarded=False
+    self.last_kind=''; self.notice=''; self.notice_timer=0
+
+  def migrate(self):
+    # Les partides de versions anteriors conserven el temps i el rècord.
+    if self.version!=3 or 'obstacles' in self.__dict__:
+      self.hazards=[]; self.pickups=[]; self.warning=0; self.spawn_cd=70
+      self.y=float(DINO_GROUND); self.ground=DINO_GROUND; self.vy=0.; self.jumps=0
+      self.__dict__.pop('obstacles',None)
+    self.version=3; self.started=self.started or self.move_count>0; self.paused=True; self.accum=0.; self.duck=False; self.duck_timer=0
+    self.score=self.move_count//6+self.coins*20
+
+  def crouching(self):
+    return (self.duck or self.duck_timer>0) and self.y>=self.ground-.5
 
   def player_rect(self):
-    return pygame.Rect(112, int(self.y) - 56, 48, 56)
+    h=29 if self.crouching() else 57
+    return pygame.Rect(DINO_X,round(self.y)-h,54,h)
 
   def jump(self):
-    if self.y >= self.ground - 0.5 and not self.winner:
-      self.vy = self.jump_force
+    if self.winner or self.paused: return
+    self.started=True; self.duck=False; self.duck_timer=0
+    if self.jumps<2:
+      self.vy=self.jump_force if self.jumps==0 else -12.8
+      self.jumps+=1
 
-  def spawn_hazard(self):
-    pool = [('cactus', 24), ('double_cactus', 10), ('rock', 12), ('barrel', 11)]
-    if self.score >= 90:
-      pool.append(('bird', 9))
-    if self.score >= 140:
-      pool.append(('jeep', 8))
-    if self.score >= 190:
-      pool.append(('bullet', 8))
-    total = sum(w for _, w in pool)
-    pick = random.uniform(0, total)
-    acc = 0
-    kind = pool[0][0]
-    for k, w in pool:
-      acc += w
-      if pick <= acc:
-        kind = k
-        break
-    if kind == 'cactus':
-      return {'type':kind, 'x':WIDTH + random.randint(0, 60), 'y':self.ground - 54, 'w':24, 'h':54, 'vx':self.speed}
-    if kind == 'double_cactus':
-      return {'type':kind, 'x':WIDTH + random.randint(0, 60), 'y':self.ground - 58, 'w':42, 'h':58, 'vx':self.speed + 0.4}
-    if kind == 'rock':
-      return {'type':kind, 'x':WIDTH + random.randint(0, 40), 'y':self.ground - 22, 'w':34, 'h':22, 'vx':self.speed + 0.6}
-    if kind == 'barrel':
-      return {'type':kind, 'x':WIDTH + random.randint(0, 40), 'y':self.ground - 28, 'w':28, 'h':28, 'vx':self.speed + 1.0}
-    if kind == 'bird':
-      return {'type':kind, 'x':WIDTH + 20, 'y':self.ground - random.choice((95, 120, 145)), 'w':48, 'h':28, 'vx':self.speed + 2.4}
-    if kind == 'jeep':
-      return {'type':kind, 'x':WIDTH + 10, 'y':self.ground - 34, 'w':86, 'h':34, 'vx':self.speed + 2.0}
-    return {'type':'bullet', 'x':-70, 'y':self.ground - random.choice((18, 24)), 'w':34, 'h':10, 'vx':-(11.0 + self.score / 130.0)}
+  def duck_action(self,touch=False):
+    if self.winner or self.paused: return
+    self.started=True
+    if touch: self.duck_timer=55
+    else: self.duck=True
+    if self.y<self.ground-1: self.vy=max(self.vy,10.)
 
-  def hazard_rect(self, h):
-    return dino_hazard_rect(h)
+  def toggle_pause(self):
+    if self.winner: return
+    self.paused=not self.paused; self.duck=False; self.duck_timer=0; self.accum=0.
 
-  def update(self):
-    if self.winner:
-      return
-    self.move_count += 1
-    self.seconds = self.move_count / 60.0
-    self.score = int(self.seconds * 10)
-    self.speed = 8.0 + min(9.0, self.seconds * 0.23)
-    self.vy += self.gravity
-    self.y += self.vy
-    if self.y > self.ground:
-      self.y = self.ground
-      self.vy = 0.0
-    self.spawn_cd -= 1
-    if self.spawn_cd <= 0:
-      self.hazards.append(self.spawn_hazard())
-      self.spawn_cd = max(18, int(random.randint(34, 70) - min(26, self.seconds * 1.4)))
-    for h in self.hazards:
-      if h['type'] == 'bullet':
-        h['x'] -= h['vx']
-      else:
-        h['x'] -= h['vx']
-        if h['type'] in ('barrel', 'rock'):
-          h['y'] += math.sin((self.move_count + h['x']) * 0.08) * 0.2
-    self.hazards = [h for h in self.hazards if -120 < h['x'] + h['w'] < WIDTH + 140]
-    self.obstacles = self.hazards
-    pr = self.player_rect().inflate(-12, -6)
-    for h in self.hazards:
-      hr = self.hazard_rect(h)
-      if h['type'] == 'bird':
-        hr = hr.inflate(-8, -8)
-      elif h['type'] == 'jeep':
-        hr = hr.inflate(-8, -4)
-      elif h['type'] == 'bullet':
-        hr = hr.inflate(-4, -2)
-      else:
-        hr = hr.inflate(-3, -2)
-      if pr.colliderect(hr):
-        self.winner = True
-        break
+  def reward(self):
+    return int(self.seconds//5)+self.coins//3
+
+  def spawn(self):
+    choices=['cactus','rock','barrel','log']
+    if self.seconds>=8: choices+=['double_cactus','bird','highbird']
+    if self.seconds>=16: choices+=['jeep','orb']
+    choices=[k for k in choices if k!=self.last_kind] or choices
+    kind=random.choice(choices); self.last_kind=kind; self.waves+=1
+    w,h=DINO_HAZARDS[kind]; y=self.ground-h
+    if kind=='bird': y=self.ground-59
+    if kind=='highbird': y=self.ground-137
+    if kind=='orb':
+      self.warning=55; x=-w-16; vx=7.5
+    else:
+      x=WIDTH+12; vx=-self.speed*(1.06 if kind in ('bird','jeep','highbird') else 1)
+    self.hazards.append({'type':kind,'x':float(x),'y':float(y),'w':w,'h':h,'vx':vx,'warn':self.warning if kind=='orb' else 0})
+    # Una filera de monedes indica la trajectòria de salt. Els ocells baixos
+    # tenen monedes arran de terra per suggerir ajupir-se.
+    if kind!='orb':
+      yy=self.ground-(18 if kind=='bird' else 17 if kind=='highbird' else 122)
+      for i in range(3): self.pickups.append({'kind':'coin','x':float(WIDTH-12+i*32),'y':float(yy-(0 if kind in ('bird','highbird') else (12 if i==1 else 0)))})
+    if self.waves%5==0:
+      self.pickups.append({'kind':'shield' if self.waves%10==5 else 'magnet','x':float(WIDTH+155),'y':float(self.ground-30)})
+
+  def step(self):
+    self.move_count+=1; self.seconds=self.move_count/60.; self.speed=5.8+min(6.0,self.seconds*.105)
+    self.distance+=self.speed; self.warning=max(0,self.warning-1)
+    self.duck_timer=max(0,self.duck_timer-1); self.invuln=max(0,self.invuln-1); self.magnet=max(0,self.magnet-1); self.notice_timer=max(0,self.notice_timer-1)
+    self.vy+=self.gravity; self.y+=self.vy
+    if self.y>=self.ground: self.y=float(self.ground); self.vy=0.; self.jumps=0
+    # No se solapen finestres de col·lisió de dos obstacles.
+    if not any(not h.get('passed',False) for h in self.hazards):
+      self.spawn_cd-=1
+      if self.spawn_cd<=0:
+        self.spawn(); self.spawn_cd=max(18,49-int(self.seconds*.35))
+    pr=self.player_rect().inflate(-12,-8)
+    for h in self.hazards[:]:
+      if h['warn']>0: h['warn']-=1; continue
+      h['x']+=h['vx']
+      if h['type']=='orb': h['y']=self.ground-h['h']-abs(math.sin(self.move_count*.12))*7
+      elif h['type']=='barrel': h['y']=self.ground-h['h']-abs(math.sin(self.move_count*.09))*3
+      hr=dino_rect(h).inflate(-5,-5)
+      if not h.get('passed',False) and pr.colliderect(hr) and not self.invuln:
+        if self.shield:
+          self.shield=False; self.invuln=75; self.notice='Escut utilitzat!'; self.notice_timer=90
+          self.hazards.remove(h); continue
+        self.hit=DINO_LABELS[h['type']]; self.winner=True; break
+      if not h.get('passed',False) and ((h['vx']<0 and h['x']+h['w']<DINO_X-16) or (h['vx']>0 and h['x']>DINO_X+72)):
+        self.cleared+=1; h['passed']=True
+      if h['x']+h['w']<-35 or h['x']>WIDTH+35: self.hazards.remove(h)
+    for p in self.pickups[:]:
+      p['x']-=self.speed
+      if self.magnet and p['kind']=='coin' and abs(p['x']-pr.centerx)<115:
+        p['x']+=(pr.centerx-p['x'])*.15; p['y']+=(pr.centery-p['y'])*.18
+      if pr.inflate(14,14).colliderect(pygame.Rect(round(p['x'])-11,round(p['y'])-11,22,22)):
+        if p['kind']=='coin': self.coins+=1
+        elif p['kind']=='shield': self.shield=True; self.notice='Escut activat'; self.notice_timer=90
+        else: self.magnet=480; self.notice='Imant · 8 segons'; self.notice_timer=90
+        self.pickups.remove(p)
+      elif p['x']<-30: self.pickups.remove(p)
+    self.score=self.move_count//6+self.coins*20
+
+  def update(self,dt=DINO_STEP):
+    if self.winner or not self.started or self.paused: return
+    self.accum+=min(.15,max(0.,dt))
+    while self.accum+1e-9>=DINO_STEP and not self.winner:
+      self.accum-=DINO_STEP; self.step()
+
+
+def dino_mix(a,b,t): return tuple(round(x+(y-x)*t) for x,y in zip(a,b))
+
+def dino_stage(g):
+  n=int(g.seconds//25)%len(DINO_STAGES); a=DINO_STAGES[n]; b=DINO_STAGES[(n+1)%len(DINO_STAGES)]
+  t=round(max(0.,min(1.,(g.seconds%25-21)/4))*12)/12
+  return (a[0],*(dino_mix(x,y,t) for x,y in zip(a[1:],b[1:])))
+
+def dino_sky(top,bottom):
+  key=(top,bottom)
+  if key not in _DINO_SKY:
+    if len(_DINO_SKY)>14: _DINO_SKY.clear()
+    s=pygame.Surface((WIDTH,HEIGHT))
+    for y in range(HEIGHT): pygame.draw.line(s,dino_mix(top,bottom,min(1.,y/470)),(0,y),(WIDTH,y))
+    _DINO_SKY[key]=s
+  return _DINO_SKY[key]
+
+def dino_ridge(g,col,base,amp,rate,seed):
+  # Perfil continu: una capa llunyana i una de propera es mouen a velocitats diferents.
+  shift=g.distance*rate; pts=[(0,HEIGHT)]
+  for x in range(0,WIDTH+20,16):
+    q=(x+shift)/130.; y=base+amp*(.55*math.sin(q+seed)+.32*math.sin(q*2.3+seed)+.13*math.cos(q*4.1))
+    pts.append((x,round(y)))
+  pts.append((WIDTH+20,HEIGHT)); pygame.draw.polygon(SCREEN,col,pts)
+
+def dino_tree(x,y,col,leaf):
+  x=int(x); pygame.draw.polygon(SCREEN,col,[(x-4,y),(x+4,y),(x+2,y-40),(x-3,y-40)])
+  for dx,dy in ((-25,-39),(0,-54),(22,-41)):
+    pygame.draw.line(SCREEN,col,(x,y-23),(x+dx,y+dy),3)
+    pygame.draw.ellipse(SCREEN,leaf,(x+dx-23,y+dy-11,46,19))
+
+def dino_landscape(g):
+  name,top,bottom,far,near,sand,ink=dino_stage(g)
+  if SAVE['backgrounds'].get('dino','auto')=='auto':
+    SCREEN.blit(dino_sky(top,bottom),(0,0))
+    night=name=='Nit estrellada'; sun=(231,239,249) if night else (255,235,153)
+    pygame.draw.circle(SCREEN,sun,(561,166),37)
+    if night:
+      for i in range(35):
+        x=(i*107+33)%WIDTH; y=100+(i*71)%225
+        pygame.draw.circle(SCREEN,(226,229,219),(x,y),1+i%2)
+    else:
+      for i in range(4):
+        x=int((i*227+65-g.distance*.045)%940)-105; y=150+(i*41)%120
+        for dx,dy,w,h in ((0,8,98,18),(20,0,51,27),(57,5,42,23)):
+          pygame.draw.ellipse(SCREEN,dino_mix(bottom,(255,255,255),.55),(x+dx,y+dy,w,h))
+    dino_ridge(g,far,354,74,.10,1.4); dino_ridge(g,near,437,52,.24,3.5)
+    for i in range(5):
+      x=(i*189-g.distance*.34)%945-65; dino_tree(x,497,ink,dino_mix(near,ink,.4))
+    dino_ridge(g,sand,510,20,.55,2.2)
+  pygame.draw.rect(SCREEN,sand,(0,g.ground,WIDTH,HEIGHT-g.ground))
+  pygame.draw.rect(SCREEN,dino_mix(sand,ink,.19),(0,g.ground+3,WIDTH,30))
+  pygame.draw.line(SCREEN,ink,(0,g.ground),(WIDTH,g.ground),3)
+  for i in range(24):
+    x=int((i*43-g.distance)%1032)-10; y=g.ground+10+(i*29)%63
+    pygame.draw.line(SCREEN,dino_mix(sand,ink,.33),(x,y),(x+7+i%8,y),2)
+  return name
+
+# Sprites dibuixats amb píxel art i paleta limitada, sense fitxers externs.
+_DINO_SPRITES={}
+def dino_sprite(pose,phase):
+  key=(pose,phase)
+  if key in _DINO_SPRITES: return _DINO_SPRITES[key]
+  s=pygame.Surface((42,34),pygame.SRCALPHA); outline=(36,53,48); skin=(72,126,92); light=(123,168,104); belly=(214,202,134); dark=(48,86,69)
+  if pose=='duck':
+    poly=[(2,11),(9,15),(15,13),(24,14),(30,10),(39,10),(41,13),(41,18),(32,18),(28,22),(23,24),(15,24),(11,21),(6,17),(1,16)]
+    pygame.draw.polygon(s,outline,poly); pygame.draw.polygon(s,skin,[(4,13),(15,16),(25,16),(31,12),(39,12),(39,16),(30,17),(27,21),(17,22),(12,19)])
+    pygame.draw.rect(s,belly,(19,20,9,3)); pygame.draw.rect(s,outline,(33,12,2,2)); pygame.draw.rect(s,(245,240,210),(34,12,1,1))
+    for i,x in enumerate((15,25)):
+      dx=3 if (phase+i)%2==0 else -2
+      pygame.draw.line(s,outline,(x,22),(x+dx,29),4); pygame.draw.rect(s,outline,(x+dx-1,28,6,3))
+  else:
+    poly=[(1,15),(8,18),(12,19),(16,16),(20,10),(23,3),(27,1),(37,1),(40,4),(40,12),(34,12),(34,15),(28,16),(27,23),(22,27),(14,26),(10,23),(5,21)]
+    pygame.draw.polygon(s,outline,poly)
+    pygame.draw.polygon(s,skin,[(4,17),(13,21),(18,17),(22,10),(25,4),(29,3),(36,3),(38,5),(38,10),(32,10),(32,14),(26,14),(25,22),(21,25),(15,24),(11,21)])
+    pygame.draw.polygon(s,light,[(16,20),(22,13),(25,5),(30,3),(35,3),(30,6),(26,13),(23,19)])
+    pygame.draw.polygon(s,belly,[(26,15),(25,22),(21,25),(18,24),(22,19)])
+    pygame.draw.rect(s,outline,(32,5,3,3)); pygame.draw.rect(s,(255,250,220),(33,5,1,1))
+    pygame.draw.line(s,outline,(34,10),(38,10),1); pygame.draw.line(s,dark,(24,17),(30,20),2); pygame.draw.line(s,outline,(30,20),(32,18),2)
+    for i,x in enumerate((16,23)):
+      dx=3 if (phase+i)%2==0 else -3
+      if pose=='jump': dx=-4 if i==0 else 3
+      yy=29 if pose=='jump' else 32
+      pygame.draw.line(s,outline,(x,24),(x+dx,yy),4); pygame.draw.rect(s,outline,(x+dx-1,yy-1,6,3)); pygame.draw.line(s,skin,(x,25),(x+dx,yy-2),2)
+    for x,y in ((15,21),(19,18),(28,8)): pygame.draw.rect(s,dark,(x,y,2,2))
+  _DINO_SPRITES[key]=s; return s
+
+def dino_draw_player(g):
+  r=g.player_rect(); x=r.centerx; ground=g.ground
+  shade=pygame.Surface((92,18),pygame.SRCALPHA); pygame.draw.ellipse(shade,(44,36,26,75),shade.get_rect()); SCREEN.blit(shade,(x-46,ground-5))
+  if g.invuln and g.move_count//5%2: return
+  pose='duck' if g.crouching() else 'jump' if g.y<g.ground-1 else 'run'
+  phase=(g.move_count//6)%2 if g.started and not g.paused else 0
+  img=dino_sprite(pose,phase)
+  if pose=='duck': img=img.subsurface((0,9,42,23)); size=(76,36)
+  else: size=(76,64)
+  img=pygame.transform.scale(img,size); SCREEN.blit(img,img.get_rect(midbottom=(r.centerx,round(g.y)+2)))
+  if g.shield:
+    pygame.draw.ellipse(SCREEN,(65,203,221),r.inflate(22,18),3)
+  if g.started and not g.paused and pose=='run':
+    for i in range(3):
+      dx=(g.move_count*3+i*15)%40
+      pygame.draw.circle(SCREEN,(226,195,143),(r.x-5-dx,ground-3-i*3),max(1,4-dx//13))
+
+def dino_cactus(r):
+  edge=(36,82,62); green=(55,130,82); shine=(113,169,106); w=max(7,r.w//3); cx=r.centerx
+  for pts in (((cx-3,r.y+r.h//2),(r.x+4,r.y+r.h//2),(r.x+4,r.y+r.h//3)),((cx+3,r.y+r.h*2//3),(r.right-4,r.y+r.h*2//3),(r.right-4,r.y+r.h//2-9))):
+    pygame.draw.lines(SCREEN,edge,False,pts,8); pygame.draw.lines(SCREEN,green,False,pts,5)
+  pygame.draw.rect(SCREEN,edge,(cx-w//2-1,r.y,w+2,r.h),border_radius=5); pygame.draw.rect(SCREEN,green,(cx-w//2+1,r.y+2,max(4,w-2),r.h-3),border_radius=4)
+  pygame.draw.line(SCREEN,shine,(cx-1,r.y+5),(cx-1,r.bottom-5),2)
+  for yy in range(r.y+10,r.bottom-5,11): pygame.draw.line(SCREEN,edge,(cx+3,yy),(cx+6,yy-2),1)
+
+def dino_draw_hazard(h,g):
+  if h['warn']>0: return
+  r=dino_rect(h); k=h['type']; edge=(67,52,47)
+  if k=='cactus': dino_cactus(r)
+  elif k=='double_cactus':
+    dino_cactus(pygame.Rect(r.x,r.y+12,27,r.h-12)); dino_cactus(pygame.Rect(r.x+28,r.y,28,r.h))
+  elif k=='rock':
+    pts=[(r.x,r.bottom-1),(r.x+6,r.y+9),(r.x+22,r.y),(r.right-6,r.y+6),(r.right,r.bottom-2)]; pygame.draw.polygon(SCREEN,(112,116,110),pts); pygame.draw.polygon(SCREEN,edge,pts,2); pygame.draw.polygon(SCREEN,(165,163,143),[pts[1],pts[2],pts[3],(r.centerx,r.y+14)])
+  elif k in ('barrel','orb'):
+    pygame.draw.ellipse(SCREEN,edge,r); pygame.draw.ellipse(SCREEN,(182,123,65) if k=='barrel' else (207,146,65),r.inflate(-4,-4))
+    a=g.move_count*.20; p=(r.centerx+int(math.cos(a)*r.w*.32),r.centery+int(math.sin(a)*r.h*.32)); q=(2*r.centerx-p[0],2*r.centery-p[1]); pygame.draw.line(SCREEN,(245,202,123),p,q,3)
+    if k=='barrel': pygame.draw.ellipse(SCREEN,(102,92,76),r.inflate(-10,-10),2)
+  elif k=='log':
+    pygame.draw.rect(SCREEN,edge,r,border_radius=10); pygame.draw.rect(SCREEN,(145,96,55),r.inflate(-4,-4),border_radius=8)
+    pygame.draw.ellipse(SCREEN,(221,174,109),(r.right-20,r.y+2,18,r.h-4)); pygame.draw.ellipse(SCREEN,(136,90,57),(r.right-16,r.y+6,10,r.h-12),2)
+    for yy in (r.y+7,r.y+14): pygame.draw.line(SCREEN,(90,60,43),(r.x+8,yy),(r.right-24,yy),2)
+  elif k in ('bird','highbird'):
+    x,y=r.center; flap=7 if g.move_count//6%2 else -7
+    pygame.draw.polygon(SCREEN,(68,65,64),[(r.x,y),(x-9,y-3),(x+6,y),(r.right,y-2),(x+18,y+7),(x-9,y+7)])
+    pygame.draw.polygon(SCREEN,(105,105,99),[(x-4,y),(x+7,y+flap),(r.right-2,y+flap*2),(x+14,y+3)])
+    pygame.draw.circle(SCREEN,(68,65,64),(r.x+6,y-4),7); pygame.draw.polygon(SCREEN,(214,158,79),[(r.x+2,y-4),(r.x-6,y),(r.x+3,y+2)]); pygame.draw.circle(SCREEN,(255,232,170),(r.x+5,y-6),1)
+  elif k=='jeep':
+    pygame.draw.rect(SCREEN,(58,57,48),(r.x+2,r.bottom-19,r.w-4,15),border_radius=5)
+    pygame.draw.polygon(SCREEN,(105,122,78),[(r.x,r.y+19),(r.x+25,r.y+19),(r.x+36,r.y+1),(r.x+72,r.y+1),(r.x+85,r.y+19),(r.right-2,r.y+19),(r.right-2,r.bottom-9),(r.x,r.bottom-9)])
+    pygame.draw.polygon(SCREEN,(185,212,205),[(r.x+38,r.y+5),(r.x+54,r.y+5),(r.x+54,r.y+19),(r.x+29,r.y+19)]); pygame.draw.rect(SCREEN,(185,212,205),(r.x+59,r.y+5,12,14),border_radius=2)
+    pygame.draw.line(SCREEN,(50,71,56),(r.x+26,r.y+22),(r.right-7,r.y+22),2); pygame.draw.rect(SCREEN,(255,230,153),(r.x+3,r.y+24,9,6),border_radius=2)
+    for x in (r.x+19,r.right-20): pygame.draw.circle(SCREEN,(42,47,45),(x,r.bottom-10),10); pygame.draw.circle(SCREEN,(139,147,131),(x,r.bottom-10),5)
+
+def dino_draw_pickup(p,g):
+  x,y=round(p['x']),round(p['y']); k=p['kind']; y+=round(math.sin(g.move_count*.12+x*.05)*3)
+  if k=='coin':
+    w=6+round(abs(math.sin(g.move_count*.12))*13); rr=pygame.Rect(x-w//2,y-11,w,22)
+    pygame.draw.ellipse(SCREEN,(143,94,28),rr); pygame.draw.ellipse(SCREEN,(255,205,66),rr.inflate(-3,-3)); pygame.draw.ellipse(SCREEN,(255,240,166),rr.inflate(-6,-7),1)
+  else:
+    pygame.draw.circle(SCREEN,(38,72,87),(x,y),13); pygame.draw.circle(SCREEN,(115,232,221),(x,y),11,2)
+    if k=='shield': pygame.draw.polygon(SCREEN,(117,225,239),[(x-6,y-6),(x+6,y-6),(x+6,y+2),(x,y+8),(x-6,y+2)])
+    else:
+      pygame.draw.arc(SCREEN,(255,175,90),(x-7,y-7,14,14),math.pi,2*math.pi,4); pygame.draw.rect(SCREEN,(255,175,90),(x-7,y-5,4,8)); pygame.draw.rect(SCREEN,(255,175,90),(x+3,y-5,4,8))
+
+def dino_text(txt,center,font=SMALL,col=(236,243,230)):
+  t=font.render(txt,True,col); SCREEN.blit(t,t.get_rect(center=center))
+
+def dino_control_rects():
+  return [('menu',pygame.Rect(18,685,95,47)),('restart',pygame.Rect(121,685,103,47)),('save',pygame.Rect(232,685,85,47)),('pause',pygame.Rect(325,685,91,47)),('duck',pygame.Rect(424,685,116,47)),('jump',pygame.Rect(548,685,134,47))]
+
+def draw_dino(app):
+  g=app.game; draw_background('dino'); stage=dino_landscape(g)
+  for p in g.pickups: dino_draw_pickup(p,g)
+  for h in g.hazards: dino_draw_hazard(h,g)
+  dino_draw_player(g)
+  # HUD i controls de contrast alt, independents del fons equipat.
+  pygame.draw.rect(SCREEN,(28,45,43),(14,14,672,85),border_radius=16)
+  dino_text('DINO RUN',(113,37),TITLE_FONT,(248,221,137)); dino_text(stage,(113,68))
+  for x,label,value in ((283,'PUNTS',str(g.score)),(397,'TEMPS',f'{g.seconds:.1f}s'),(500,'MONEDES',str(g.coins)),(612,'RÈCORD',str(max(g.score,SAVE.get('dino_best',0))))):
+    dino_text(label,(x,35),SMALL,(171,199,186)); dino_text(value,(x,65),TITLE_FONT)
+  pygame.draw.rect(SCREEN,(32,48,43),(18,112,664,39),border_radius=10)
+  dino_text(f"Nivell {1+int(g.seconds//15)} · velocitat {g.speed/5.8:.1f}x",(157,131))
+  dino_text(('Escut actiu' if g.shield else 'Sense escut')+(' · Imant '+str((g.magnet+59)//60)+'s' if g.magnet else ''),(511,131))
+  if g.warning:
+    pygame.draw.rect(SCREEN,(101,62,31),(18,171,275,46),border_radius=12); dino_text('! Obstacles per l’esquerra',(155,194),FONT,(255,230,165))
+  if g.notice_timer: dino_text(g.notice,(350,175),FONT,(30,74,58) if stage!='Nit estrellada' else (249,240,204))
+  pygame.draw.rect(SCREEN,(28,45,43),(0,625,WIDTH,125))
+  dino_text('ESPAI / ↑ salt doble  ·  ↓ ajupir-se  ·  P pausa',(350,645),SMALL)
+  dino_text(f'+{g.reward()} punts de botiga en acabar · esquiva obstacles i recull monedes',(350,667),SMALL,(237,203,117))
+  labels={'menu':'Menú','restart':'Reinicia','save':'Desa','pause':'Continua' if g.paused else 'Pausa','duck':'↓ Ajupir','jump':'↑ Saltar'}
+  for k,r in dino_control_rects():
+    on=r.collidepoint(mouse_pos()); col=(231,196,111) if k in ('jump','duck') else (61,87,76)
+    if on: col=dino_mix(col,(255,255,255),.19)
+    pygame.draw.rect(SCREEN,col,r,border_radius=10); dino_text(labels[k],r.center,SMALL,(31,47,41) if k in ('jump','duck') else (241,244,230))
+  if not g.winner and (g.paused or not g.started):
+    pygame.draw.rect(SCREEN,(28,45,43),(87,267,526,133),border_radius=20); pygame.draw.rect(SCREEN,(235,196,111),(87,267,526,133),2,border_radius=20)
+    dino_text('PARTIDA EN PAUSA' if g.paused else 'SAVANNA ADVENTURE',(350,305),TITLE_FONT,(248,221,137))
+    dino_text('Prem P o toca Continua' if g.paused else 'Prem ESPAI o toca Saltar per començar',(350,348),FONT)
+    dino_text('El temps només compta mentre jugues.',(350,378),SMALL,(175,201,185))
+
+def process_dino(app,events):
+  g=app.game
+  for ev in events:
+    if ev.type==getattr(pygame,'WINDOWFOCUSLOST',-999):
+      if g.started and not g.winner: g.paused=True; g.accum=0.; g.duck=False; g.duck_timer=0
+    elif ev.type==pygame.KEYUP and ev.key in (pygame.K_DOWN,pygame.K_s): g.duck=False
+    elif ev.type==pygame.KEYDOWN:
+      k=ev.key
+      if k in (pygame.K_ESCAPE,pygame.K_m): app.leave(); return
+      if k==pygame.K_r: app.restart(); return
+      if g.winner: continue
+      if k==pygame.K_p: g.toggle_pause()
+      elif k in (pygame.K_SPACE,pygame.K_UP,pygame.K_w):
+        if g.paused: g.toggle_pause()
+        else: g.jump()
+      elif k in (pygame.K_DOWN,pygame.K_s): g.duck_action()
+    elif ev.type==pygame.MOUSEBUTTONDOWN and ev.button==1:
+      if app.result:
+        _,again,menu=result_buttons()
+        if again.collidepoint(ev.pos): app.restart(); return
+        if menu.collidepoint(ev.pos): app.leave(); return
+        continue
+      action=next((k for k,r in dino_control_rects() if r.collidepoint(ev.pos)),None)
+      if action=='menu': app.leave(); return
+      if action=='restart': app.restart(); return
+      if action=='save' and not g.winner:
+        g.paused=True; g.accum=0.; app.press('save'); return
+      if action=='pause': g.toggle_pause()
+      elif action=='duck': g.duck_action(True)
+      elif action=='jump' or (action is None and 155<=ev.pos[1]<625):
+        if g.paused: g.toggle_pause()
+        else: g.jump()
 
 
 # Fons independents dels taulers# Fons independents dels taulers i les fitxes. Els patrons es calculen una vegada.
@@ -16459,7 +16601,7 @@ async def main():
   configure_browser()
 
   while app.running:
-    clock.tick(60)
+    app.frame_dt = clock.tick(60) / 1000.0
     events = pygame.event.get()
     events = [pygame.event.Event(e.type, {**e.dict, "pos": logical_pos(e.pos)})
               if hasattr(e, "pos") else e for e in events]
