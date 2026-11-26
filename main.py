@@ -5305,7 +5305,7 @@ GUIDES={
  'chess':[('Peces','El peó avança i captura en diagonal; el cavall salta en L.'),('Escac','Torre: rectes. Alfil: diagonals. Dama: totes dues. Rei: un pas.'),('Mat i coronació','Protegeix el rei; guanya amb escac i mat. Corona el peó a dama, torre, alfil o cavall. L’enroc protegeix el rei si no s’han mogut el rei i la torre i no hi ha escac ni caselles atacades.')],
  'go':[('Llibertats','Col·loca pedres en interseccions. Els punts buits adjacents són llibertats.'),('Captura','Envolta un grup rival sense deixar-li llibertats per retirar-lo.'),('Territori','Passa si no vols jugar. Dos passis seguits acaben i es compta l’àrea; blanques +7,5.')],
  'shogi':[('Moviments','P: un pas endavant. L: recta endavant. C: salta dues files endavant i una columna. S: diagonals o un pas endavant. O: tres direccions endavant, costats o un pas recte enrere. A: diagonals. T: rectes. R: un pas en qualsevol direcció.'),('Promoció','En entrar, sortir o moure dins les tres files rivals, pots promocionar. Peó, llança, cavall i plata es mouen com l’or; alfil i torre guanyen passos de rei. + indica promoció.'),('Captures i mà','Les peces capturades tornen a la teva mà. Clica una peça de la mà i una casella lliure. No pots duplicar peons a una columna.'),('Objectiu','Evita l’escac i fes mat al rei rival. Or i rei no promocionen.')],
- 'dino':[('Controls','Espai, W o fletxa amunt: salta. Torna a prémer a l’aire per fer un doble salt. S o fletxa avall: ajup-te. P: pausa. També hi ha botons tàctils.'),('Obstacles','Salta cactus, roques, bidons, troncs, jeeps, plantes rodolants i cristalls. Ajup-te sota ocells baixos, arcs i robots. L’avís de l’esquerra anuncia una esfera rebotant.'),('Punts i ajudes','10 punts per segon, 20 per moneda, combos i reptes amb bonificació. Escut, imant, càmera lenta i monedes x2. Tria Infinit, Sprint (60 s) o Expedició (120 s). En acabar guanyes punts de botiga.')]
+ 'dino':[('Controls','Espai, W, fletxa amunt o toca la pantalla per saltar. Al trampolí vermell pots fer un salt alt. P: pausa.'),('Obstacles','Salta cactus, roques, bidons, troncs, jeeps, plantes rodolants i cristalls. Ajup-te sota ocells baixos, arcs i robots. L’avís de l’esquerra anuncia una esfera rebotant.'),('Punts i ajudes','10 punts per segon, 20 per moneda, combos i reptes amb bonificació. Escut, imant, càmera lenta i monedes x2. Tria Infinit, Sprint (60 s) o Expedició (120 s). En acabar guanyes punts de botiga.')]
 }
 
 def text_center(txt,y,font=FONT,color=None):
@@ -16110,6 +16110,7 @@ class DinoRun:
     self.last_move=None; self.stack=[]; self.hit=''; self.cleared=0; self.rewarded=False
     self.last_kind=''; self.notice=''; self.notice_timer=0
     self.platforms=[]; self.upper_entries=0; self.upper_frames=0; self.high_cleared=0
+    self.caves=[]; self.cave_runs=0
 
   def migrate(self):
     # Les partides de versions anteriors conserven el temps i el rècord.
@@ -16119,6 +16120,7 @@ class DinoRun:
       self.__dict__.pop('obstacles',None)
     self.version=3; self.started=self.started or self.move_count>0; self.paused=True; self.accum=0.; self.duck=False; self.duck_timer=0
     self.score=self.move_count//6+self.coins*20
+    self.caves=getattr(self,'caves',[]); self.cave_runs=getattr(self,'cave_runs',0)
 
   def crouching(self):
     return (self.duck or self.duck_timer>0) and self.y>=self.ground-.5
@@ -16130,9 +16132,24 @@ class DinoRun:
   def jump(self):
     if self.winner or self.paused: return
     self.started=True; self.duck=False; self.duck_timer=0
-    if self.jumps<2:
-      self.vy=self.jump_force if self.jumps==0 else -12.8
-      self.jumps+=1
+    if self.jumps==0 and self.vy==0:
+      p=self.spring_at_player()
+      if p is not None and abs(self.y-self.ground)<.5:
+        self.launch_spring(p)
+      else:
+        self.vy=self.jump_force; self.jumps=1
+
+  def spring_at_player(self):
+    for p in self.platforms:
+      if 'spring_offset' not in p or p.get('spring_used'): continue
+      sx=p['x']-p['spring_offset']
+      if sx<=DINO_X+27<=sx+p['spring_w']: return p
+    return None
+
+  def launch_spring(self,p):
+    p['spring_used']=True; self.vy=-24.; self.jumps=1
+    self.notice='Trampolí!'; self.notice_timer=65
+    self.emit(DINO_X+27,self.ground-4,(244,98,70),15)
 
   def duck_action(self,touch=False):
     if self.winner or self.paused: return
@@ -16175,17 +16192,20 @@ class DinoRun:
     self.duck_timer=max(0,self.duck_timer-1); self.invuln=max(0,self.invuln-1); self.magnet=max(0,self.magnet-1); self.notice_timer=max(0,self.notice_timer-1)
     # Plataformes unidireccionals: es travessen de baix cap amunt,
     # i només s'hi aterra quan els peus creuen la superfície en caure.
-    # No es generen obstacles nous fins a deixar enrere el tram doble.
-    if not self.platforms and not any(not h.get('passed',False) for h in self.hazards):
+    # No es generen obstacles nous fins a deixar enrere el tram doble o el túnel.
+    if not self.platforms and not self.caves and not any(not h.get('passed',False) for h in self.hazards):
       self.spawn_cd-=1
       if self.spawn_cd<=0:
         self.spawn(); self.spawn_cd=max(18,49-int(self.seconds*.35))
     for p in self.platforms:
       p['speed']=self.speed
       p['x']-=self.speed
+    for c in self.caves:
+      c['x']-=self.speed
     for h in self.hazards:
       if h.get('lane') in ('upper','lower'): h['vx']=-self.speed
     self.platforms=[p for p in self.platforms if p['x']+p['w']>DINO_X-20]
+    self.caves=[c for c in self.caves if c['x']+c['w']>-60]
     old_y=self.y
     self.vy+=self.gravity; self.y+=self.vy
     floor=self.ground
@@ -16200,6 +16220,11 @@ class DinoRun:
             p['visited']=True; self.upper_entries+=1; self.notice='Carril superior!'; self.notice_timer=85
       self.y=float(floor); self.vy=0.; self.jumps=0
       if floor<self.ground: self.upper_frames+=1
+      elif old_y<self.ground-.5:
+        pad=self.spring_at_player()
+        if pad is not None: self.launch_spring(pad)
+    # A fall from a bridge is not a new jump opportunity.
+    if self.vy!=0 and self.jumps==0: self.jumps=1
     pr=self.player_rect().inflate(-12,-8)
     for h in self.hazards[:]:
       if h['warn']>0: h['warn']-=1; continue
@@ -16462,7 +16487,7 @@ def draw_dino(app):
     pygame.draw.rect(SCREEN,(101,62,31),(18,171,275,46),border_radius=12); dino_text('! Obstacles per l’esquerra',(155,194),FONT,(255,230,165))
   if g.notice_timer: dino_text(g.notice,(350,175),FONT,(30,74,58) if stage!='Nit estrellada' else (249,240,204))
   pygame.draw.rect(SCREEN,(28,45,43),(0,625,WIDTH,125))
-  dino_text('ESPAI / ↑ salt doble  ·  ↓ ajupir-se  ·  P pausa',(350,645),SMALL)
+  dino_text('ESPAI / ↑ salt  ·  P pausa',(350,645),SMALL)
   dino_text(f'+{g.reward()} punts de botiga en acabar · esquiva obstacles i recull monedes',(350,667),SMALL,(237,203,117))
   labels={'menu':'Menú','restart':'Reinicia','save':'Desa','pause':'Continua' if g.paused else 'Pausa','duck':'↓ Ajupir','jump':'↑ Saltar'}
   for k,r in dino_control_rects():
@@ -16690,8 +16715,6 @@ _DINO_SKINS = [('Verd clàssic',0,(72,126,92)),('Ambre',200,(192,118,56)),('Glac
 _DINO_TASKS = [('temps', 'Aguanta 30 segons',30),('coins','Recull 12 monedes',12),('cleared','Esquiva 8 obstacles',8)]
 DINO_HAZARDS.update(tumble=(38,38), arch=(82,36), crystal=(35,47), drone=(47,24))
 DINO_LABELS.update(tumble='Planta rodolant',arch='Barrera baixa',crystal='Cristall',drone='Robot volador')
-DINO_HAZARDS.update(tall_spire=(38,181),thorn_wall=(50,176))
-DINO_LABELS.update(tall_spire='Punxa gegant de ferro',thorn_wall='Cactus gegant')
 DINO_STAGES += (
  ('Selva',(103,173,143),(225,240,188),(81,128,99),(48,102,77),(125,158,92),(56,82,61)),
  ('Glacera',(139,183,216),(242,249,248),(129,165,190),(107,148,175),(214,230,234),(76,112,135)),
@@ -16705,42 +16728,41 @@ def dino_unlocked(index):
 
 class DinoRun(_DinoBase):
   def __init__(self):
-    super().__init__(); self.version=4; self.mode_id='endless'; self.skin=0
+    super().__init__(); self.version=6; self.mode_id='endless'; self.skin=0
     self.double=0; self.combo=0; self.max_combo=0
     self.bonus=0; self.tasks=[]; self.particles=[]; self.floaters=[]; self.complete=False; self.combo_timer=0
     self.mode_id=dino_profile().get('mode','endless')
 
-  def tall_obstacle_size(self, kind):
-    """Fa els obstacles gegants una mica més petits a mesura que avances metres."""
-    base_w, base_h = DINO_HAZARDS[kind]
-    metres = self.distance / 18.0
-    scale = max(0.78, 1.0 - metres * 0.00035)
-    w = max(28, round(base_w * scale))
-    h = max(120, round(base_h * scale))
-    return w, h
     if self.mode_id not in _DINO_MODES: self.mode_id='endless'
     self.skin=dino_profile().get('skin',0)
     if not isinstance(self.skin,int) or not 0<=self.skin<len(_DINO_SKINS) or not dino_unlocked(self.skin): self.skin=0
 
   def migrate(self):
     version=self.version
-    if version==4:
+    if version in (5,6): self.version=4
+    if self.version==4:
       # Base v3 understands the same collision schema; preserve additional state.
       self.version=3
-    super().migrate(); self.version=4
-    if version!=4:
+    super().migrate(); self.version=6
+    if version not in (4,5,6):
       self.mode_id='endless'; self.bonus=0; self.tasks=[]; self.complete=False
     self.particles=[]; self.floaters=[]; self.score=self.move_count//6+self.coins*20+self.bonus
     self.__dict__.pop('slow',None)
     self.pickups=[p for p in self.pickups if p.get('kind')!='slow']
-    if version!=4: self.platforms=[]
+    if version not in (5,6) and (self.platforms or any(h.get("type") in ("tall_spire","thorn_wall") for h in self.hazards)):
+      self.platforms=[]; self.hazards=[]; self.pickups=[]; self.warning=0; self.spawn_cd=70
+      self.y=float(self.ground); self.vy=0.; self.jumps=0
+    if version not in (4,5,6): self.platforms=[]
     self.platforms=getattr(self,'platforms',[])
+    self.caves=getattr(self,'caves',[])
+    self.cave_runs=getattr(self,'cave_runs',0)
     self.upper_entries=getattr(self,'upper_entries',0)
     self.upper_frames=getattr(self,'upper_frames',0)
     self.high_cleared=getattr(self,'high_cleared',0)
     if 'lenta' in self.notice.lower(): self.notice=''; self.notice_timer=0
     # Retira les trampes del pont també en reprendre una partida antiga.
-    self.hazards=[h for h in self.hazards if h.get('lane')!='upper' and h.get('type') not in ('upper_spike','upper_totem')]
+    self.hazards=[h for h in self.hazards if h.get('type') not in ('upper_spike','upper_totem','tall_spire','thorn_wall')]
+    if self.y<self.ground and self.vy!=0: self.jumps=1
     # Actualitza obstacles de partides antigues per poder jugar només saltant.
     for h in self.hazards:
       if h['type']=='bird': h['y']=self.ground-37
@@ -16749,10 +16771,7 @@ class DinoRun(_DinoBase):
       elif h['type']=='drone': h['y']=self.ground-40
 
   def jump(self):
-    before=self.jumps
     super().jump()
-    if before==1 and self.jumps==2:
-      self.emit(DINO_X+27,self.y-4,(239,226,175),10)
 
   def reward(self):
     return super().reward()+len(self.tasks)*3+(10 if self.complete else 0)
@@ -16766,35 +16785,55 @@ class DinoRun(_DinoBase):
   def pop(self,text,x,y,col):
     self.floaters.append({'text':text,'x':x,'y':y,'life':48,'color':col}); self.floaters=self.floaters[-12:]
 
+  def in_cave(self):
+    px=DINO_X+27
+    return any(c['x']<=px<=c['x']+c['w'] for c in self.caves)
+
+  def spawn_cave(self):
+    self.waves+=1; self.last_kind='cave'
+    x=float(WIDTH+120); width=2000 if self.seconds>=45 else 1450
+    self.caves.append({'x':x,'w':width,'roof':178,'mouth':230})
+    self.cave_runs+=1
+    # Trampes només a dins de la cova: separades i visibles amb zones de llum.
+    cave_pattern=[('rock',420),('barrel',790),('cactus',1170)]
+    if width>1600: cave_pattern.append(('log',1540))
+    for kind,off in cave_pattern:
+      w,h=DINO_HAZARDS[kind]
+      self.hazards.append({'type':kind,'x':x+off,'y':float(self.ground-h),'w':w,'h':h,'vx':-self.speed,'warn':0,'cave':True})
+    # Monedes a les clapes de llum.
+    for off in (250, 640, 1030) + ((1410,) if width>1600 else ()): 
+      for i in range(3):
+        self.pickups.append({'kind':'coin','x':x+off+i*30,'y':float(self.ground-108-(10 if i==1 else 0))})
+    self.notice='Entres a la cova'; self.notice_timer=130
+
   def spawn(self):
+    # Trams especials de cova amb zones de llum i trampes pròpies.
+    if self.seconds>=18 and (self.waves+2)%9==0:
+      self.spawn_cave()
+      return
     # Cada cinc onades hi ha una ruta alternativa elevada. El carril
     # inferior continua disponible: no cal pujar per completar una cursa.
     if self.seconds>=8 and (self.waves+1)%5==0:
       self.waves+=1; self.last_kind='platform'
-      x=float(WIDTH+12); y=self.ground-172; speed=self.speed
+      # El pont neix més lluny perquè el trampolí entri per la dreta.
+      x=float(WIDTH+185); y=self.ground-215; speed=self.speed
       long_bridge=self.seconds>=24 and random.random()<.55
-      width=1700 if long_bridge else 900
-      self.platforms.append({'x':x,'y':y,'w':width,'speed':speed,'long':long_bridge})
-      # Carril inferior: obstacles espaiats perquè segueixi sent una ruta segura.
-      lower_pattern=['cactus'] if not long_bridge else ['cactus','rock']
-      lower_offsets=[220] if not long_bridge else [220, 1000]
-      for kind,off in zip(lower_pattern,lower_offsets):
-        w,h=DINO_HAZARDS[kind]
-        self.hazards.append({'type':kind,'x':x+off,'y':float(self.ground-h),'w':w,'h':h,'vx':-speed,'warn':0,'lane':'lower'})
-      # Carril superior lliure: totes les monedes es poden recollir corrent.
+      width=2450 if long_bridge else 1550
+      self.platforms.append({'x':x,'y':y,'w':width,'speed':speed,'long':long_bridge,
+                             'spring_offset':160,'spring_w':110,'spring_used':False})
+      # Els dos carrils no coincideixen en altura amb un salt normal.
+      lower=[('cactus',380),('rock',1350)] if long_bridge else [('cactus',380)]
+      upper=[('cactus',1000),('rock',1880)] if long_bridge else [('cactus',1000)]
+      for lane,pattern,floor in (('lower',lower,self.ground),('upper',upper,y)):
+        for kind,off in pattern:
+          w,h=DINO_HAZARDS[kind]
+          self.hazards.append({'type':kind,'x':x+off,'y':float(floor-h),'w':w,'h':h,'vx':-speed,'warn':0,'lane':lane})
       coin_count=16 if long_bridge else 10
       for i in range(coin_count):
         off=85+i*(width-170)/(coin_count-1)
+        if any(abs(off-pos)<75 for _,pos in upper): continue
         self.pickups.append({'kind':'coin','x':x+off,'y':float(y-29)})
-      self.notice='Pont segur · doble salt per pujar'; self.notice_timer=155 if long_bridge else 145
-      return
-    if self.seconds>=12 and (self.waves+1)%4==0:
-      self.waves+=1; kind=random.choice(('tall_spire','thorn_wall')); self.last_kind=kind
-      w,h=self.tall_obstacle_size(kind); x=float(WIDTH+12)
-      self.hazards.append({'type':kind,'x':x,'y':float(self.ground-h),'w':w,'h':h,'vx':-self.speed,'warn':0})
-      self.notice='Obstacle alt · doble salt!'; self.notice_timer=150
-      coin_y=float(self.ground-h-44)
-      for i in range(3): self.pickups.append({'kind':'coin','x':x-35+i*34,'y':coin_y})
+      self.notice='Salta al trampolí vermell o continua pel terra'; self.notice_timer=150
       return
     if self.seconds<10 or random.random()<.62:
       super().spawn()
@@ -17026,7 +17065,7 @@ def draw_dino(app):
     pygame.draw.rect(SCREEN,(28,45,43),(145,138,410,32),border_radius=9)
     dino_text(g.notice,(350,154),SMALL,(248,221,137))
   pygame.draw.rect(SCREEN,(28,45,43),(0,650,WIDTH,100))
-  dino_text('Toca per saltar · Torna a tocar a l’aire per fer un doble salt',(350,668),SMALL)
+  dino_text('Toca per saltar · Trampolí vermell: puja al pont · dins la cova hi ha trampes',(350,668),SMALL)
   labels={'menu':'Menú','restart':'Reinicia','save':'Desa','pause':'Continua' if g.paused else 'Pausa','jump':'SALTAR'}
   for k,r in dino_control_rects(): dino_ui_button(r,labels[k],k=='jump')
   if g.paused and not g.winner:
@@ -17135,9 +17174,8 @@ GUIDES = {
   ('Reutilitza captures','Les peces capturades van a la mà i es poden tornar a posar en una casella buida. No pots posar dos peons no promocionats teus a la mateixa columna ni deixar una peça sense moviments futurs.','Col·loca la peça de la mà al tauler.','drop')],
  'dino': [
   ('Un toc per saltar','Toca qualsevol zona del joc, o prem Espai, W o fletxa amunt. No cal ajupir-se.','Toca el dibuix per veure un salt sobre el cactus.','jump'),
-  ('Doble salt','Torna a tocar mentre ets a l’aire per guanyar altura i superar obstacles amples. Els ocells alts es poden passar corrent.','Prova un doble salt sobre el vehicle.','double'),
-  ('Carril superior','Fes dos salts per arribar a la plataforma elevada. A dalt no hi ha trampes: recull monedes tranquil·lament o continua pel terra.','Mira com s’arriba al pont.','lanes'),
-  ('Obstacles alts','La punxa gegant de ferro i el cactus gegant són massa alts per a un salt normal. Fes el segon salt a prop del punt més alt del primer.','Prova el doble salt sobre la punxa de ferro.','tall'),
+  ('Trampolí vermell','Quan siguis sobre el trampolí vermell, toca per saltar més amunt. També pots saltar-hi a sobre. Si continues corrent, et quedes a baix.','Mira com el trampolí et porta al pont.','lanes'),
+  ('Trampes al pont','A dalt hi ha cactus i roques, però tens un tram lliure per aterrar. Salta quan t’hi acostis. No es pot saltar de nou a l’aire.','Prova un salt sobre un cactus del pont.','upper'),
   ('Monedes i potenciadors','Guanya 10 punts de cursa per segon i 20 per moneda. Els combos i reptes donen bonificacions. L’escut protegeix d’una col·lisió; l’imant atrau monedes.','Observa com es recullen les monedes.','coins'),
   ('Tria el repte','Infinit no té límit. Sprint dura 60 segons i Expedició 120. Pots pausar i desar la cursa. Els punts de botiga s’afegeixen en acabar.','Consulta l’objectiu i comença a jugar.','modes')]
 }
@@ -17267,12 +17305,12 @@ def guide_visual(kind,tag,reveal,area):
     dest=(350,320)
     if tag=='jump': dino_cactus(pygame.Rect(330,333,25,55))
     elif tag=='double': dino_draw_hazard({'type':'jeep','x':310,'y':339,'w':96,'h':49,'warn':0},type('Example',(),{'move_count':0})())
-    elif tag=='lanes':
-      pygame.draw.rect(SCREEN,(119,78,47),(285,216,305,20),border_radius=4)
-      pygame.draw.rect(SCREEN,(209,158,84),(285,216,305,7),border_radius=3)
-      for i in range(5): pygame.draw.circle(SCREEN,(239,183,45),(330+i*48,199),9)
-    elif tag=='tall':
-      dino_draw_tall({'type':'tall_spire','x':335,'y':247,'w':36,'h':141},None)
+    elif tag in ('lanes','upper'):
+      pygame.draw.rect(SCREEN,(119,78,47),(285,270,305,20),border_radius=4)
+      pygame.draw.rect(SCREEN,(209,158,84),(285,270,305,7),border_radius=3)
+      dino_draw_spring(220,388,54,False)
+      for i in range(3): pygame.draw.circle(SCREEN,(239,183,45),(330+i*48,251),9)
+      dino_cactus(pygame.Rect(510,222,24,48))
     elif tag=='coins':
       for i in range(3):
         if not reveal:
@@ -17283,7 +17321,7 @@ def guide_visual(kind,tag,reveal,area):
       if reveal: guide_fit('Preparat per jugar!',(350,354),FONT,(40,105,67))
     else:
       # El dibuix del salt canvia amb el toc, sense alterar cap partida real.
-      px=(465 if tag=='lanes' else 430 if tag=='tall' else 365) if reveal else 160; py=(216 if tag=='lanes' else 225 if tag=='tall' else 282 if tag=='double' else 304) if reveal else 388
+      px=(390 if tag=='lanes' else 520 if tag=='upper' else 365) if reveal else (425 if tag=='upper' else 160); py=(270 if tag=='lanes' else 194 if tag=='upper' else 304) if reveal else (270 if tag=='upper' else 388)
       im=pygame.transform.scale(dino_skin_sprite('jump' if reveal else 'run',0,0),(85,68)); SCREEN.blit(im,im.get_rect(midbottom=(px,py)))
       if not reveal: guide_arrow((206,345),(295,275)); guide_target((350,300),18)
     return dest
@@ -17607,7 +17645,34 @@ def dino_landscape(g):
     for i in range(18):
       x=(i*109+17)%WIDTH; y=150+(i*47)%155
       if math.sin(g.move_count*.04+i)>.75: pygame.draw.circle(SCREEN,(249,246,214),(x,y),2)
-  return name
+  # Trams de cova / túnel amb llum parcial.
+  for c in getattr(g,'caves',[]):
+    x=round(c['x']); w=round(c['w']); roof=c.get('roof',178)
+    mouth=c.get('mouth',230)
+    # Boca i sostre de la cova.
+    pygame.draw.rect(SCREEN,(46,34,29),(x,0,w,roof))
+    pts=[(x,roof),(x+70,roof+26),(x+160,roof+8),(x+250,roof+33),(x+360,roof+10),(x+w-240,roof+26),(x+w-120,roof+7),(x+w,roof+24),(x+w,0),(x,0)]
+    pygame.draw.polygon(SCREEN,(61,45,37),pts)
+    # Paret del fons i bases rocoses inferiors.
+    pygame.draw.rect(SCREEN,(37,28,24),(x,roof+32,w,g.ground-(roof+32)))
+    pygame.draw.rect(SCREEN,(57,42,35),(x,g.ground-18,w,18))
+    # Estalactites.
+    for xx in range(x+45,x+w-40,95):
+      hh=24+((xx//23)%22)
+      pygame.draw.polygon(SCREEN,(72,54,46),[(xx,roof+6),(xx+10,roof+hh),(xx+20,roof+6)])
+    # Pilars/entrades visuals a la boca.
+    pygame.draw.polygon(SCREEN,(72,54,46),[(x,roof),(x+32,roof+40),(x+22,g.ground-6),(x,g.ground-12)])
+    pygame.draw.polygon(SCREEN,(72,54,46),[(x+w,roof+4),(x+w-34,roof+44),(x+w-24,g.ground-6),(x+w,g.ground-12)])
+    # Zones de llum que entren des del sostre.
+    light_offsets=(250,640,1030) + ((1410,) if w>1600 else ())
+    for off in light_offsets:
+      cx=x+off
+      beam=pygame.Surface((150,310),pygame.SRCALPHA)
+      pygame.draw.polygon(beam,(255,226,152,26),[(75,0),(35,44),(20,210),(130,210),(115,44)])
+      pygame.draw.ellipse(beam,(255,219,132,34),(18,182,114,80))
+      SCREEN.blit(beam,(cx-75,roof-4))
+      pygame.draw.ellipse(SCREEN,(255,214,120),(cx-34,g.ground-6,68,8),1)
+  return 'Cova' if getattr(g,'in_cave',lambda:False)() else name
 
 
 def dino_visual_floor(g):
@@ -17615,10 +17680,38 @@ def dino_visual_floor(g):
     if p['x']<=DINO_X+27<p['x']+p['w'] and g.y<=p['y']+.5])
 
 
+def dino_draw_spring(x,y,w,used=False):
+  x,y,w=round(x),round(y),round(w)
+  dark=(105,31,31); red=(210,49,46) if not used else (145,64,54)
+  pygame.draw.rect(SCREEN,dark,(x,y-8,w,13),border_radius=4)
+  for xx in range(x+10,x+w-8,20):
+    pygame.draw.lines(SCREEN,(168,177,172),False,[(xx,y-4),(xx+5,y-12),(xx+10,y-4)],3)
+  pygame.draw.rect(SCREEN,dark,(x,y-17,w,9),border_radius=4)
+  pygame.draw.rect(SCREEN,red,(x+2,y-16,w-4,6),border_radius=3)
+  pygame.draw.line(SCREEN,(255,155,120),(x+6,y-16),(x+w-6,y-16),2)
+  if not used:
+    cx=x+w//2
+    for yy in (y-38,y-27):
+      pygame.draw.lines(SCREEN,(105,31,31),False,[(cx-9,yy+5),(cx,yy-4),(cx+9,yy+5)],5)
+      pygame.draw.lines(SCREEN,(255,105,83),False,[(cx-9,yy+5),(cx,yy-4),(cx+9,yy+5)],3)
+
+
 def dino_draw_platforms(g):
   for p in g.platforms:
+    if 'spring_offset' in p:
+      sx=p['x']-p['spring_offset']
+      if -p['spring_w']<sx<WIDTH: dino_draw_spring(sx,g.ground,p['spring_w'],p.get('spring_used',False))
     x,y,w=round(p['x']),round(p['y']),p['w']
-    long_bridge=p.get('long',False)
+    # Pilars visuals perquè el pont no sembli penjat del no-res.
+    for px in range(x+24,x+w,170):
+      if -40<px<WIDTH+40:
+        pillar_top=y+23
+        pillar_h=max(35,g.ground-pillar_top)
+        pygame.draw.rect(SCREEN,(96,73,57),(px,pillar_top,14,pillar_h),border_radius=4)
+        pygame.draw.rect(SCREEN,(132,101,74),(px+3,pillar_top,5,pillar_h),border_radius=3)
+        pygame.draw.rect(SCREEN,(82,61,48),(px-8,g.ground,30,8),border_radius=4)
+        for yy in range(pillar_top+18,g.ground-8,56):
+          pygame.draw.line(SCREEN,(118,88,66),(px,yy),(px+14,yy),2)
     pygame.draw.rect(SCREEN,(73,49,35),(x,y+8,w,20),border_radius=4)
     pygame.draw.rect(SCREEN,(163,111,61),(x,y+2,w,18),border_radius=4)
     pygame.draw.line(SCREEN,(247,210,137),(x,y+1),(x+w,y+1),4)
@@ -17630,8 +17723,8 @@ def dino_draw_platforms(g):
       pygame.draw.polygon(SCREEN,(93,63,43),[(xx,y+26),(xx+24,y+26),(xx+12,y+39)])
     if -25<x<WIDTH-36:
       pygame.draw.rect(SCREEN,(37,65,55),(x,y-48,37,36),border_radius=7)
-      for yy in (y-36,y-24):
-        pygame.draw.lines(SCREEN,(255,224,134),False,[(x+10,yy+5),(x+18,yy-3),(x+27,yy+5)],3)
+      yy=y-30
+      pygame.draw.lines(SCREEN,(255,224,134),False,[(x+10,yy+5),(x+18,yy-3),(x+27,yy+5)],3)
 
 
 def dino_draw_tall(h,g):
