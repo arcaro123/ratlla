@@ -674,6 +674,7 @@ def default_save():
                    "marks": "orange", "fx": "none"},
       "items": {"hints": 0, "undos": 0, "double": 0},
       "dino_best": 0,
+      "dino_profile": {"runs":0,"coins":0,"time":0,"sprint":0,"expedition":0,"skin":0,"mode":"endless"},
       "records": {
           g: {k: [0, 0, 0] for k in LEVELS + ("local",)} for g in GAMES
       },
@@ -741,6 +742,12 @@ def load_save():
         data["slots"] = (loaded["slots"] + [None] * 10)[:10]
       data["clean_wins"] = max(0, int(loaded.get("clean_wins", 0)))
       data["dino_best"] = max(0, int(loaded.get("dino_best", 0)))
+      profile=loaded.get("dino_profile",{})
+      if isinstance(profile,dict):
+        for k in ("runs","coins","time","sprint","expedition","skin"):
+          try: data["dino_profile"][k]=max(0,int(profile.get(k,0)))
+          except (ValueError,TypeError): pass
+        if profile.get("mode") in ("endless","sprint","expedition"): data["dino_profile"]["mode"]=profile["mode"]
   except Exception:
     pass
   data["unlocked"] = data["points"] >= UNLOCK_POINTS
@@ -4512,6 +4519,8 @@ class App:
       self.anim_key = (self.game.move_count, self.game.last_move)
 
   def restart(self):
+    if self.kind == "dino" and self.slot is not None:
+      SAVE["slots"][self.slot]=None; self.slot=None; write_save()
     if self.mode == "online":
       new_count = self.game.move_count + 1
       self.game = Morris(Rules(), track=False)
@@ -4534,10 +4543,12 @@ class App:
       g.rewarded=True
       best=SAVE.get("dino_best",0)
       SAVE["dino_best"]=max(best,g.score)
+      profile=SAVE['dino_profile']; profile['runs']+=1; profile['coins']+=g.coins; profile['time']=max(profile['time'],int(g.seconds))
+      if g.complete and g.mode_id in ('sprint','expedition'): profile[g.mode_id]+=1
       reward=g.reward(); SAVE["points"]+=reward
       SAVE["unlocked"]=SAVE["points"]>=UNLOCK_POINTS
-      self.result=dict(title="NOU RÈCORD!" if g.score>best else "FI DE LA CURSA",color=COLOR_WIN if g.score>best else COLOR_DRAW,
-        lines=[f"Temps: {g.seconds:.1f} s  ·  Punts: {g.score}",f"Monedes: {g.coins}  ·  Obstacles: {g.cleared}",f"Rècord: {SAVE['dino_best']}  ·  Botiga: +{reward}",f"Obstacle: {g.hit}"])
+      self.result=dict(title="OBJECTIU COMPLETAT!" if g.complete else "NOU RÈCORD!" if g.score>best else "FI DE LA CURSA",color=COLOR_WIN if g.score>best else COLOR_DRAW,
+        lines=[f"Temps: {g.seconds:.1f} s  ·  Punts: {g.score}",f"Monedes: {g.coins}  ·  Obstacles: {g.cleared}",f"Rècord: {SAVE['dino_best']}  ·  Botiga: +{reward}",f"Reptes: {len(g.tasks)}/3 · Combo màxim: {g.max_combo}"])
       if self.slot is not None:
         SAVE["slots"][self.slot]=None; self.slot=None
       write_save(); return
@@ -5294,7 +5305,7 @@ GUIDES={
  'chess':[('Peces','El peó avança i captura en diagonal; el cavall salta en L.'),('Escac','Torre: rectes. Alfil: diagonals. Dama: totes dues. Rei: un pas.'),('Mat i coronació','Protegeix el rei; guanya amb escac i mat. Corona el peó a dama, torre, alfil o cavall. L’enroc protegeix el rei si no s’han mogut el rei i la torre i no hi ha escac ni caselles atacades.')],
  'go':[('Llibertats','Col·loca pedres en interseccions. Els punts buits adjacents són llibertats.'),('Captura','Envolta un grup rival sense deixar-li llibertats per retirar-lo.'),('Territori','Passa si no vols jugar. Dos passis seguits acaben i es compta l’àrea; blanques +7,5.')],
  'shogi':[('Moviments','P: un pas endavant. L: recta endavant. C: salta dues files endavant i una columna. S: diagonals o un pas endavant. O: tres direccions endavant, costats o un pas recte enrere. A: diagonals. T: rectes. R: un pas en qualsevol direcció.'),('Promoció','En entrar, sortir o moure dins les tres files rivals, pots promocionar. Peó, llança, cavall i plata es mouen com l’or; alfil i torre guanyen passos de rei. + indica promoció.'),('Captures i mà','Les peces capturades tornen a la teva mà. Clica una peça de la mà i una casella lliure. No pots duplicar peons a una columna.'),('Objectiu','Evita l’escac i fes mat al rei rival. Or i rei no promocionen.')],
- 'dino':[('Controls','Espai, W o fletxa amunt: salta. Torna a prémer a l’aire per fer un doble salt. S o fletxa avall: ajup-te. P: pausa. També hi ha botons tàctils.'),('Obstacles','Salta cactus, roques, bidons, troncs i jeeps. Ajup-te sota els ocells baixos. L’avís de l’esquerra anuncia una esfera rebotant.'),('Punts i ajudes','10 punts per segon, 20 per moneda. L’escut atura un impacte; l’imant atrau monedes durant 8 segons. En acabar guanyes 1 punt de botiga per cada 5 segons i cada 3 monedes.')]
+ 'dino':[('Controls','Espai, W o fletxa amunt: salta. Torna a prémer a l’aire per fer un doble salt. S o fletxa avall: ajup-te. P: pausa. També hi ha botons tàctils.'),('Obstacles','Salta cactus, roques, bidons, troncs, jeeps, plantes rodolants i cristalls. Ajup-te sota ocells baixos, arcs i robots. L’avís de l’esquerra anuncia una esfera rebotant.'),('Punts i ajudes','10 punts per segon, 20 per moneda, combos i reptes amb bonificació. Escut, imant, càmera lenta i monedes x2. Tria Infinit, Sprint (60 s) o Expedició (120 s). En acabar guanyes punts de botiga.')]
 }
 
 def text_center(txt,y,font=FONT,color=None):
@@ -16594,6 +16605,294 @@ def draw_background(target):
       js.window.eval("document.documentElement.style.setProperty('background',"+json.dumps(css)+",'important');document.body.style.setProperty('background',"+json.dumps(css)+",'important');")
       _BROWSER_FRAME=frame_key
     except Exception: pass
+
+# ---------------------------------------------------------------
+# DINO RUN — EXPEDITION: expansió del motor anterior
+# ---------------------------------------------------------------
+_DinoBase = DinoRun
+_DINO_MODES = {'endless':('Infinit',0), 'sprint':('Sprint',60), 'expedition':('Expedició',120)}
+_DINO_SKINS = [('Verd clàssic',0,(72,126,92)),('Ambre',200,(192,118,56)),('Glacial',500,(74,147,184)),('Obsidiana',1000,(90,81,117)),('Esmeralda',1800,(35,164,123)),('Daurat',3000,(205,164,62))]
+_DINO_TASKS = [('temps', 'Aguanta 30 segons',30),('coins','Recull 12 monedes',12),('cleared','Esquiva 8 obstacles',8)]
+DINO_HAZARDS.update(tumble=(38,38), arch=(82,36), crystal=(35,47), drone=(47,24))
+DINO_LABELS.update(tumble='Planta rodolant',arch='Arc baix',crystal='Cristall',drone='Robot volador')
+DINO_STAGES += (
+ ('Selva',(103,173,143),(225,240,188),(81,128,99),(48,102,77),(125,158,92),(56,82,61)),
+ ('Glacera',(139,183,216),(242,249,248),(129,165,190),(107,148,175),(214,230,234),(76,112,135)),
+ ('Volcà',(96,66,89),(239,154,105),(116,76,87),(85,65,77),(163,97,72),(69,48,55)))
+
+def dino_profile():
+  return SAVE['dino_profile']
+
+def dino_unlocked(index):
+  return SAVE.get('dino_best',0)>=_DINO_SKINS[index][1]
+
+class DinoRun(_DinoBase):
+  def __init__(self):
+    super().__init__(); self.version=4; self.mode_id='endless'; self.skin=0
+    self.slow=0; self.double=0; self.combo=0; self.max_combo=0
+    self.bonus=0; self.tasks=[]; self.particles=[]; self.floaters=[]; self.complete=False; self.combo_timer=0
+    self.mode_id=dino_profile().get('mode','endless')
+    if self.mode_id not in _DINO_MODES: self.mode_id='endless'
+    self.skin=dino_profile().get('skin',0)
+    if not isinstance(self.skin,int) or not 0<=self.skin<len(_DINO_SKINS) or not dino_unlocked(self.skin): self.skin=0
+
+  def migrate(self):
+    version=self.version
+    if version==4:
+      # Base v3 understands the same collision schema; preserve additional state.
+      self.version=3
+    super().migrate(); self.version=4
+    if version!=4:
+      self.mode_id='endless'; self.bonus=0; self.tasks=[]; self.complete=False
+    self.particles=[]; self.floaters=[]; self.score=self.move_count//6+self.coins*20+self.bonus
+
+  def reward(self):
+    return super().reward()+len(self.tasks)*3+(10 if self.complete else 0)
+
+  def emit(self,x,y,color,count=10):
+    for i in range(count):
+      a=i*2.39996; v=1.5+i%4*.65
+      self.particles.append({'x':float(x),'y':float(y),'vx':math.cos(a)*v,'vy':math.sin(a)*v-1.2,'life':22+i%9,'color':color})
+    self.particles=self.particles[-100:]
+
+  def pop(self,text,x,y,col):
+    self.floaters.append({'text':text,'x':x,'y':y,'life':48,'color':col}); self.floaters=self.floaters[-12:]
+
+  def spawn(self):
+    # Preserve the proven base scheduler: one collision window at a time.
+    if self.seconds<10 or random.random()<.62:
+      super().spawn()
+    else:
+      choices=['tumble','crystal']+(['arch','drone'] if self.seconds>=20 else [])
+      kind=random.choice([k for k in choices if k!=self.last_kind] or choices)
+      self.last_kind=kind; self.waves+=1
+      w,h=DINO_HAZARDS[kind]; y=self.ground-h
+      if kind=='arch': y=self.ground-73
+      if kind=='drone': y=self.ground-61
+      self.hazards.append({'type':kind,'x':float(WIDTH+12),'y':float(y),'w':w,'h':h,'vx':-self.speed,'warn':0})
+      for i in range(3): self.pickups.append({'kind':'coin','x':float(WIDTH-12+i*32),'y':float(self.ground-(17 if kind in ('arch','drone') else 122))})
+    # Bonus objects never overlap a forced jump/duck window.
+    if self.waves%6==0:
+      self.pickups.append({'kind':'slow' if self.waves%12==6 else 'double','x':float(WIDTH+180),'y':float(self.ground-30)})
+
+  def step(self):
+    prev_coins=self.coins; prev_cleared=self.cleared; had_shield=self.shield
+    self.combo_timer=max(0,self.combo_timer-1)
+    if not self.combo_timer: self.combo=0
+    # New pickups handled separately (base treats every other item as magnet).
+    extras=[p for p in self.pickups if p['kind'] in ('slow','double')]
+    self.pickups=[p for p in self.pickups if p['kind'] not in ('slow','double')]
+    self.slow=max(0,self.slow-1); self.double=max(0,self.double-1)
+    # Temporarily scale hazard velocities without accumulating multipliers.
+    double_active=bool(self.double)
+    factor=.70 if self.slow else 1.
+    original=[(h,h['vx']) for h in self.hazards]
+    for h,v in original: h['vx']=v*factor
+    super().step()
+    for h,v in original: h['vx']=v
+    for p in extras:
+      p['x']-=self.speed
+      if not self.winner and self.player_rect().inflate(14,14).colliderect(pygame.Rect(round(p['x'])-11,round(p['y'])-11,22,22)):
+        if p['kind']=='slow': self.slow=360; self.notice='Càmera lenta · 6 s'
+        else: self.double=480; self.notice='Monedes x2 · 8 s'
+        self.notice_timer=100; self.emit(p['x'],p['y'],(130,220,241)); continue
+      if p['x']>-30: self.pickups.append(p)
+    if self.coins>prev_coins:
+      delta=self.coins-prev_coins; self.combo+=delta; self.combo_timer=420; self.max_combo=max(self.max_combo,self.combo)
+      gain=delta*20 if double_active else 0; self.bonus+=gain
+      if self.combo//5>(self.combo-delta)//5: self.bonus+=50; self.pop('COMBO +50',DINO_X+50,self.y-75,(255,221,101))
+      self.emit(DINO_X+35,self.y-35,(255,203,65),9)
+    if had_shield and not self.shield:
+      self.combo=0; self.emit(DINO_X+30,self.y-35,(108,223,240),20)
+    if self.cleared>prev_cleared: self.emit(DINO_X+70,self.ground-5,(224,192,135),5)
+    for p in self.particles:
+      p['x']+=p['vx']; p['y']+=p['vy']; p['vy']+=.10; p['life']-=1
+    self.particles=[p for p in self.particles if p['life']>0]
+    for p in self.floaters: p['y']-=.65; p['life']-=1
+    self.floaters=[p for p in self.floaters if p['life']>0]
+    if not self.winner:
+      for key,label,target in _DINO_TASKS:
+        value=self.seconds if key=='temps' else getattr(self,key)
+        if key not in self.tasks and value>=target:
+          self.tasks.append(key); self.bonus+=100; self.notice='Repte completat! +100'; self.notice_timer=110
+          self.emit(DINO_X+30,self.y-40,(255,224,130),18)
+      limit=_DINO_MODES[self.mode_id][1]
+      if limit and self.seconds>=limit:
+        self.complete=True; self.winner=True; self.hit='Objectiu completat'; self.bonus+=250
+    self.score=self.move_count//6+self.coins*20+self.bonus
+
+# Paletes del dinosaure: es canvia el color del sprite sense perdre les vores.
+_DINO_COLORED={}
+_old_dino_sprite=dino_sprite
+
+def dino_skin_sprite(pose,phase,skin):
+  key=(pose,phase,skin)
+  if key not in _DINO_COLORED:
+    s=_old_dino_sprite(pose,phase).copy()
+    if skin:
+      color=_DINO_SKINS[skin][2]
+      for y in range(s.get_height()):
+        for x in range(s.get_width()):
+          c=s.get_at((x,y)); rgb=tuple(c[:3])
+          if rgb in ((72,126,92),(123,168,104),(48,86,69)):
+            f=1 if rgb==(72,126,92) else 1.32 if rgb==(123,168,104) else .68
+            s.set_at((x,y),tuple(min(255,int(a*f)) for a in color)+(c.a,))
+    _DINO_COLORED[key]=s
+  return _DINO_COLORED[key]
+
+_old_dino_draw_hazard=dino_draw_hazard
+
+def dino_draw_hazard(h,g):
+  k=h['type']; r=dino_rect(h)
+  if k=='tumble':
+    pygame.draw.circle(SCREEN,(105,78,48),r.center,r.w//2,2)
+    for i in range(12):
+      a=i*math.pi/6+g.move_count*.11
+      x=r.centerx+math.cos(a)*r.w*.42; y=r.centery+math.sin(a)*r.h*.42
+      pygame.draw.line(SCREEN,(153,119,70),r.center,(x,y),2)
+      pygame.draw.line(SCREEN,(94,75,48),(x,y),(x+math.sin(a)*9,y-math.cos(a)*9),2)
+  elif k=='crystal':
+    x,y=r.center; pts=[(r.x,r.bottom),(r.x+3,r.y+17),(x,r.y),(r.right-3,r.y+10),(r.right,r.bottom)]
+    pygame.draw.polygon(SCREEN,(75,130,157),pts); pygame.draw.polygon(SCREEN,(35,79,105),pts,2)
+    pygame.draw.polygon(SCREEN,(171,225,231),[(x,r.y+3),(r.x+5,r.y+18),(x,r.bottom-2)])
+  elif k=='arch':
+    pygame.draw.rect(SCREEN,(117,84,57),r,border_radius=8); pygame.draw.rect(SCREEN,(182,133,76),r.inflate(-5,-5),border_radius=6)
+    for x in range(r.x+6,r.right-4,15): pygame.draw.line(SCREEN,(91,65,43),(x,r.y+4),(x+6,r.bottom-4),2)
+    pygame.draw.rect(SCREEN,(233,188,102),(r.x+9,r.y+7,r.w-18,5),border_radius=2)
+  elif k=='drone':
+    pygame.draw.ellipse(SCREEN,(45,62,73),r); pygame.draw.ellipse(SCREEN,(116,158,175),r.inflate(-5,-5)); pygame.draw.circle(SCREEN,(255,180,75),r.center,5)
+    for x in (r.x+5,r.right-5): pygame.draw.line(SCREEN,(48,66,72),(x-12,r.y-2),(x+12,r.y-2),3)
+  else: _old_dino_draw_hazard(h,g)
+
+_old_dino_draw_pickup=dino_draw_pickup
+
+def dino_draw_pickup(p,g):
+  if p['kind'] not in ('slow','double'): return _old_dino_draw_pickup(p,g)
+  x,y=round(p['x']),round(p['y']); col=(113,219,242) if p['kind']=='slow' else (250,207,99)
+  pygame.draw.circle(SCREEN,(37,63,74),(x,y),15); pygame.draw.circle(SCREEN,col,(x,y),13,2)
+  if p['kind']=='slow':
+    pygame.draw.circle(SCREEN,col,(x,y),8,1); pygame.draw.line(SCREEN,col,(x,y),(x,y-6),2); pygame.draw.line(SCREEN,col,(x,y),(x+5,y+2),2)
+  else: dino_text('×2',(x,y),SMALL,col)
+
+_old_dino_landscape=dino_landscape
+
+def dino_landscape(g):
+  name=_old_dino_landscape(g)
+  if SAVE['backgrounds'].get('dino','auto')=='auto':
+    if name=='Selva':
+      for i in range(8):
+        x=int((i*113-g.distance*.47)%904)-80; y=510-i%3*13
+        pygame.draw.line(SCREEN,(43,89,66),(x,y),(x+7,y-79),7)
+        for j in range(5): pygame.draw.ellipse(SCREEN,(65+i%2*15,116,75),(x-40+j*17,y-90-(j%2)*13,45,30))
+    elif name=='Glacera':
+      for i in range(42):
+        x=int((i*79+g.move_count*.45)%WIDTH); y=int(157+(i*43+g.move_count*.65)%385)
+        pygame.draw.circle(SCREEN,(248,253,255),(x,y),1+i%3)
+    elif name=='Volcà':
+      for i in range(20):
+        x=int((i*109-g.distance*.12)%WIDTH); y=int(170+(i*39-g.move_count*.7)%365)
+        pygame.draw.circle(SCREEN,(242,178,92),(x,y),1+i%2)
+    elif name=='Sabana':
+      for i in range(7):
+        x=int((i*131-g.distance*.66)%917)-20
+        for j in range(3): pygame.draw.line(SCREEN,(141,121,62),(x,548),(x+(j-1)*6,535-j*2),2)
+  return name
+
+_old_dino_draw_player=dino_draw_player
+
+def dino_draw_player(g):
+  # Reuse existing animation and shield effects, swap only the sprite source.
+  global dino_sprite
+  old=dino_sprite
+  dino_sprite=lambda pose,phase:dino_skin_sprite(pose,phase,g.skin)
+  try: _old_dino_draw_player(g)
+  finally: dino_sprite=old
+  for p in g.particles:
+    pygame.draw.circle(SCREEN,p['color'],(round(p['x']),round(p['y'])),max(1,min(4,p['life']//7)))
+  for p in g.floaters: dino_text(p['text'],(round(p['x']),round(p['y'])),SMALL,p['color'])
+
+# Lobby integrated into the same play state, with no timer until start.
+def dino_lobby_rects():
+  return {'mode':pygame.Rect(85,288,250,48),'skin':pygame.Rect(365,288,250,48),'start':pygame.Rect(85,477,530,53)}
+
+def dino_lobby_action(g,key):
+  if key=='mode':
+    modes=list(_DINO_MODES); g.mode_id=modes[(modes.index(g.mode_id)+1)%len(modes)]; dino_profile()['mode']=g.mode_id; write_save()
+  elif key=='skin':
+    unlocked=[i for i in range(len(_DINO_SKINS)) if dino_unlocked(i)]; g.skin=unlocked[(unlocked.index(g.skin)+1)%len(unlocked)]; dino_profile()['skin']=g.skin; write_save()
+  elif key=='start': g.jump()
+
+_old_draw_dino=draw_dino
+
+def draw_dino(app):
+  g=app.game; _old_draw_dino(app)
+  # Compact objectives and power-up bars below the original HUD.
+  if g.started and not g.paused:
+    panel=pygame.Rect(18,220,664,65); pygame.draw.rect(SCREEN,(29,47,43),panel,border_radius=11)
+    for i,(key,label,target) in enumerate(_DINO_TASKS):
+      x=30+i*220; value=g.seconds if key=='temps' else getattr(g,key)
+      dino_text(label,(x+100,235),SMALL,(220,236,218)); pygame.draw.rect(SCREEN,(67,91,78),(x,252,198,9),border_radius=4)
+      pygame.draw.rect(SCREEN,(124,205,147) if key in g.tasks else (235,195,98),(x,252,round(198*min(1,value/target)),9),border_radius=4)
+      dino_text(f'{min(target,int(value))}/{target}',(x+100,273),SMALL)
+    limit=_DINO_MODES[g.mode_id][1]
+    status=f'{_DINO_MODES[g.mode_id][0]} · Combo {g.combo} · +{g.bonus} bonus'
+    if limit: status+=f' · {max(0,math.ceil(limit-g.seconds))} s restants'
+    pygame.draw.rect(SCREEN,(29,47,43),(18,590,664,30),border_radius=8); dino_text(status,(350,605))
+    if g.slow or g.double:
+      dino_text(('Lent '+str((g.slow+59)//60)+'s  ' if g.slow else '')+('Monedes x2 '+str((g.double+59)//60)+'s' if g.double else ''),(350,302),FONT,(247,210,112))
+  if not g.started and not g.paused and not g.winner:
+    pygame.draw.rect(SCREEN,(24,40,38),(48,171,604,388),border_radius=22); pygame.draw.rect(SCREEN,(207,171,92),(48,171,604,388),2,border_radius=22)
+    dino_text('DINO RUN: EXPEDITION',(350,205),TITLE_FONT,(248,221,137)); dino_text('Tria el mode i el dinosaure',(350,244),FONT)
+    rects=dino_lobby_rects(); profile=dino_profile()
+    for key,txt in [('mode',_DINO_MODES[g.mode_id][0]+'  >'),('skin',_DINO_SKINS[g.skin][0]+'  >')]:
+      r=rects[key]; pygame.draw.rect(SCREEN,(62,91,76),r,border_radius=10); dino_text(txt,r.center,FONT)
+    dino_text('MODE',(210,274),SMALL); dino_text('ASPECTE',(490,274),SMALL)
+    dino_text({'endless':'Sense límit de temps','sprint':'Arriba als 60 segons','expedition':'Arriba als 120 segons'}[g.mode_id],(210,363),SMALL)
+    dino_text(f"Sprint: {profile['sprint']} · Expedició: {profile['expedition']}",(210,389),SMALL,(175,201,185))
+    preview=pygame.transform.scale(dino_skin_sprite('run',0,g.skin),(84,68)); SCREEN.blit(preview,preview.get_rect(center=(490,373)))
+    nxt=next((s for i,s in enumerate(_DINO_SKINS) if not dino_unlocked(i)),None)
+    dino_text('Següent: '+nxt[0]+' · '+str(nxt[1])+' punts' if nxt else 'Tots els aspectes desbloquejats',(350,419),SMALL,(237,203,117))
+    dino_text(f"Curses: {profile['runs']}  ·  Monedes: {profile['coins']}  ·  Millor temps: {profile['time']} s",(350,449),SMALL)
+    r=rects['start']; pygame.draw.rect(SCREEN,(236,194,105),r,border_radius=12); dino_text('COMENÇAR L’AVENTURA',r.center,FONT,(31,47,41))
+
+_old_process_dino=process_dino
+
+def process_dino(app,events):
+  g=app.game; rest=[]
+  for ev in events:
+    if not g.started and not g.paused and ev.type==pygame.MOUSEBUTTONDOWN and ev.button==1:
+      key=next((k for k,r in dino_lobby_rects().items() if r.collidepoint(ev.pos)),None)
+      if key: dino_lobby_action(g,key); continue
+      if 171<=ev.pos[1]<=559: continue
+    rest.append(ev)
+  _old_process_dino(app,rest)
+
+
+ACH += [
+ ('dino:first','Primeres petjades','Acaba una cursa de Dino Run.',False,lambda:dino_profile()['runs']>=1),
+ ('dino:time','Explorador','Aguanta 45 segons en una cursa.',False,lambda:dino_profile()['time']>=45),
+ ('dino:sprint','Contra el rellotge','Completa un Sprint.',False,lambda:dino_profile()['sprint']>=1),
+ ('dino:expedition','Gran expedició','Completa el mode Expedició.',False,lambda:dino_profile()['expedition']>=1),
+ ('dino:coins','Col·leccionista','Recull 100 monedes entre totes les curses.',False,lambda:dino_profile()['coins']>=100),
+ ('dino:gold','Llegenda prehistòrica','Aconsegueix 3000 punts en una cursa.',False,lambda:SAVE['dino_best']>=3000),
+]
+
+_old_achievement_medal=draw_achievement_medal
+
+def draw_achievement_medal(center,key,done):
+  _old_achievement_medal(center,key,done)
+  if not key.startswith('dino:'): return
+  x,y=center; col=(109,77,34) if done else (91,88,84)
+  pygame.draw.circle(SCREEN,(255,235,185) if done else (210,205,200),(x,y+6),12)
+  kind=key.split(':')[1]
+  if kind in ('first','gold'):
+    icon=pygame.transform.scale(dino_skin_sprite('run',0,5 if kind=='gold' and done else 0),(24,20)); SCREEN.blit(icon,icon.get_rect(center=(x,y+6)))
+  elif kind=='coins':
+    pygame.draw.circle(SCREEN,col,(x,y+6),8,2); pygame.draw.line(SCREEN,col,(x,y),(x,y+12),2)
+  elif kind in ('time','sprint'):
+    pygame.draw.circle(SCREEN,col,(x,y+6),8,2); pygame.draw.line(SCREEN,col,(x,y+6),(x,y+1),2); pygame.draw.line(SCREEN,col,(x,y+6),(x+4,y+9),2)
+  else:
+    pygame.draw.polygon(SCREEN,col,[(x-10,y+13),(x-3,y-2),(x+3,y+6),(x+6,y+1),(x+11,y+13)],2)
 
 async def main():
   clock = pygame.time.Clock()
