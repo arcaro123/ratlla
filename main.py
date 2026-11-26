@@ -16709,6 +16709,15 @@ class DinoRun(_DinoBase):
     self.double=0; self.combo=0; self.max_combo=0
     self.bonus=0; self.tasks=[]; self.particles=[]; self.floaters=[]; self.complete=False; self.combo_timer=0
     self.mode_id=dino_profile().get('mode','endless')
+
+  def tall_obstacle_size(self, kind):
+    """Fa els obstacles gegants una mica més petits a mesura que avances metres."""
+    base_w, base_h = DINO_HAZARDS[kind]
+    metres = self.distance / 18.0
+    scale = max(0.78, 1.0 - metres * 0.00035)
+    w = max(28, round(base_w * scale))
+    h = max(120, round(base_h * scale))
+    return w, h
     if self.mode_id not in _DINO_MODES: self.mode_id='endless'
     self.skin=dino_profile().get('skin',0)
     if not isinstance(self.skin,int) or not 0<=self.skin<len(_DINO_SKINS) or not dino_unlocked(self.skin): self.skin=0
@@ -16781,10 +16790,11 @@ class DinoRun(_DinoBase):
       return
     if self.seconds>=12 and (self.waves+1)%4==0:
       self.waves+=1; kind=random.choice(('tall_spire','thorn_wall')); self.last_kind=kind
-      w,h=DINO_HAZARDS[kind]; x=float(WIDTH+12)
+      w,h=self.tall_obstacle_size(kind); x=float(WIDTH+12)
       self.hazards.append({'type':kind,'x':x,'y':float(self.ground-h),'w':w,'h':h,'vx':-self.speed,'warn':0})
       self.notice='Obstacle alt · doble salt!'; self.notice_timer=150
-      for i in range(3): self.pickups.append({'kind':'coin','x':x-35+i*34,'y':float(self.ground-224)})
+      coin_y=float(self.ground-h-44)
+      for i in range(3): self.pickups.append({'kind':'coin','x':x-35+i*34,'y':coin_y})
       return
     if self.seconds<10 or random.random()<.62:
       super().spawn()
