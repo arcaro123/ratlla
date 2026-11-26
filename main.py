@@ -488,6 +488,12 @@ EXTRA_ITEMS = {k: EXTRA_ITEMS[k] for k in (
 
 BACKGROUND_THEMES = {
     "auto": dict(name="Original", price=0, desc="El paisatge propi de cada joc. També permet recuperar el fons original."),
+    "alps": dict(name="Muntanyes", price=180, desc="Ideal per a paisatges alpins o valls verdes.", palette=((240,246,250),(187,212,227),(112,149,181)), motif="photo", image="mountains.jpg"),
+    "forestlake": dict(name="Bosc i llac", price=240, desc="Un fons natural tranquil, amb aigua i arbres.", palette=((237,247,240),(178,212,187),(105,146,113)), motif="photo", image="forest_lake.jpg"),
+    "citylights": dict(name="Ciutat de nit", price=320, desc="Llums urbanes i cel nocturn per a un toc modern.", palette=((237,241,250),(158,176,212),(76,100,148)), motif="photo", image="city_night.jpg"),
+    "desert": dict(name="Desert", price=380, desc="Dunes i tons càlids, perfecte per al Dino Run.", palette=((255,244,229),(237,198,142),(191,140,84)), motif="photo", image="desert.jpg"),
+    "coast": dict(name="Costa", price=420, desc="Mar, roques i horitzó clar.", palette=((236,248,252),(176,216,224),(89,156,176)), motif="photo", image="coast.jpg"),
+    "sakura": dict(name="Jardí japonès", price=520, desc="Molt adequat per a Shogi i taulers zen.", palette=((250,241,245),(230,196,211),(181,132,152)), motif="photo", image="japanese_garden.jpg"),
     "mist": dict(name="Boira blava", price=120, desc="Blau grisós i formes suaus.", palette=((241,247,250),(189,213,226),(145,179,199)), motif="waves"),
     "forest": dict(name="Bosc zen", price=250, desc="Verd sàlvia amb fulles discretes.", palette=((242,247,232),(192,218,188),(130,167,127)), motif="leaves"),
     "sunset": dict(name="Capvespre", price=350, desc="Tons préssec amb un horitzó càlid.", palette=((255,244,229),(244,199,170),(204,143,120)), motif="hills"),
@@ -4526,6 +4532,7 @@ class App:
     if kind == "dino":
       SAVE["dino_best"] = max(SAVE.get("dino_best", 0), int(getattr(g, "score", 0)))
       res = dict(title="FI DE LA CURSA", lines=[], color=COLOR_DRAW)
+      res["lines"].append(f"Temps: {g.seconds:.1f} s")
       res["lines"].append(f"Puntuació: {g.score}")
       res["lines"].append(f"Rècord: {SAVE['dino_best']}")
       if g.score >= 500:
@@ -5293,7 +5300,7 @@ GUIDES={
  'chess':[('Peces','El peó avança i captura en diagonal; el cavall salta en L.'),('Escac','Torre: rectes. Alfil: diagonals. Dama: totes dues. Rei: un pas.'),('Mat i coronació','Protegeix el rei; guanya amb escac i mat. Corona el peó a dama, torre, alfil o cavall. L’enroc protegeix el rei si no s’han mogut el rei i la torre i no hi ha escac ni caselles atacades.')],
  'go':[('Llibertats','Col·loca pedres en interseccions. Els punts buits adjacents són llibertats.'),('Captura','Envolta un grup rival sense deixar-li llibertats per retirar-lo.'),('Territori','Passa si no vols jugar. Dos passis seguits acaben i es compta l’àrea; blanques +7,5.')],
  'shogi':[('Moviments','P: un pas endavant. L: recta endavant. C: salta dues files endavant i una columna. S: diagonals o un pas endavant. O: tres direccions endavant, costats o un pas recte enrere. A: diagonals. T: rectes. R: un pas en qualsevol direcció.'),('Promoció','En entrar, sortir o moure dins les tres files rivals, pots promocionar. Peó, llança, cavall i plata es mouen com l’or; alfil i torre guanyen passos de rei. + indica promoció.'),('Captures i mà','Les peces capturades tornen a la teva mà. Clica una peça de la mà i una casella lliure. No pots duplicar peons a una columna.'),('Objectiu','Evita l’escac i fes mat al rei rival. Or i rei no promocionen.')],
- 'dino':[('Salt','Prem espai, W, fletxa amunt o fes clic per saltar.'),('Obstacles','Esquiva els cactus. Si xoques, s’acaba la cursa.'),('Objectiu','Aguanta tant com puguis i supera el teu rècord.')]
+ 'dino':[('Salt','Prem espai, W, fletxa amunt o fes clic per saltar.'),('Obstacles','Esquiva cactus, roques, bidons, ocells, jeeps i fins i tot bales que van d\'esquerra a dreta.'),('Objectiu','Com més segons aguantis, més punts guanyaràs i més ràpid anirà la cursa.')]
 }
 
 def text_center(txt,y,font=FONT,color=None):
@@ -16062,37 +16069,114 @@ def draw_achievement_medal(center, key, done):
     pygame.draw.arc(SCREEN, ink, (cx-7, cy-2, 14, 12), math.pi, 2*math.pi, 2)
 
 
+def dino_hazard_rect(h):
+  return pygame.Rect(int(h['x']), int(h['y']), int(h['w']), int(h['h']))
+
+
+def draw_savannah_vehicle(rect):
+  pygame.draw.rect(SCREEN, (153, 96, 50), rect, border_radius=6)
+  cab = pygame.Rect(rect.x + rect.w * 0.55, rect.y + 4, rect.w * 0.24, rect.h * 0.45)
+  pygame.draw.rect(SCREEN, (208, 196, 172), cab, border_radius=3)
+  pygame.draw.rect(SCREEN, (89, 97, 103), (rect.x + 8, rect.y + rect.h - 10, rect.w - 16, 8), border_radius=4)
+  for wx in (rect.x + 16, rect.right - 16):
+    pygame.draw.circle(SCREEN, (45, 45, 45), (wx, rect.bottom - 2), 8)
+    pygame.draw.circle(SCREEN, (177, 177, 177), (wx, rect.bottom - 2), 3)
+
+
+def draw_dino_hazard(h):
+  r = dino_hazard_rect(h)
+  kind = h['type']
+  if kind == 'cactus':
+    pygame.draw.rect(SCREEN, (54, 122, 71), r, border_radius=4)
+    pygame.draw.rect(SCREEN, (37, 90, 51), r, 2, border_radius=4)
+    pygame.draw.line(SCREEN, (37,90,51), (r.x + r.w//3, r.y + 12), (r.x + r.w//3, r.y - 8), 3)
+    pygame.draw.line(SCREEN, (37,90,51), (r.right - r.w//3, r.y + 14), (r.right - r.w//3, r.y), 3)
+  elif kind == 'double_cactus':
+    left = pygame.Rect(r.x, r.y + 8, r.w//2 - 2, r.h - 8)
+    right = pygame.Rect(r.centerx, r.y, r.w//2, r.h)
+    for part in (left, right):
+      pygame.draw.rect(SCREEN, (52, 126, 72), part, border_radius=4)
+      pygame.draw.rect(SCREEN, (35, 90, 52), part, 2, border_radius=4)
+  elif kind == 'rock':
+    pts = [(r.x + 2, r.bottom - 2), (r.x + 7, r.y + 6), (r.centerx, r.y), (r.right - 5, r.y + 8), (r.right - 1, r.bottom - 3)]
+    pygame.draw.polygon(SCREEN, (117, 108, 102), pts)
+    pygame.draw.polygon(SCREEN, (72, 66, 63), pts, 2)
+  elif kind == 'barrel':
+    pygame.draw.ellipse(SCREEN, (132, 90, 48), r)
+    pygame.draw.ellipse(SCREEN, (90, 58, 28), r, 2)
+    for off in (0.28, 0.5, 0.72):
+      x = int(r.x + r.w * off)
+      pygame.draw.line(SCREEN, (79, 48, 24), (x, r.y + 3), (x, r.bottom - 3), 2)
+  elif kind == 'bird':
+    pygame.draw.ellipse(SCREEN, (48, 48, 48), (r.x + 8, r.y + 7, r.w - 16, r.h - 12))
+    pygame.draw.polygon(SCREEN, (48,48,48), [(r.x + 8, r.y + r.h//2), (r.x - 8, r.y + r.h//2 - 7), (r.x + 6, r.y + r.h//2 + 1)])
+    pygame.draw.polygon(SCREEN, (48,48,48), [(r.right - 7, r.y + r.h//2), (r.right + 11, r.y + r.h//2 - 3), (r.right - 4, r.y + r.h//2 + 4)])
+    pygame.draw.arc(SCREEN, (30,30,30), (r.x + 2, r.y, r.w//2, r.h), 2.8, 6.1, 2)
+    pygame.draw.arc(SCREEN, (30,30,30), (r.centerx - 3, r.y, r.w//2, r.h), 3.6, 0.4, 2)
+  elif kind == 'jeep':
+    draw_savannah_vehicle(r)
+  elif kind == 'bullet':
+    pygame.draw.rect(SCREEN, (110, 82, 54), (10, r.y + 12, 22, 42), border_radius=4)
+    pygame.draw.circle(SCREEN, (224, 198, 142), (21, r.y + 6), 10)
+    pygame.draw.line(SCREEN, (110,82,54), (27, r.y + 22), (51, r.y + 14), 4)
+    pygame.draw.ellipse(SCREEN, (60, 60, 60), r)
+    pygame.draw.ellipse(SCREEN, (255, 247, 181), (r.x - 10, r.y + 2, 10, r.h - 4))
+
+
+def draw_dino_player(g):
+  r = g.player_rect()
+  body_col = (43, 43, 43)
+  hi = (84, 84, 84)
+  body = pygame.Rect(r.x + 6, r.y + 13, 36, 22)
+  head = pygame.Rect(r.x + 22, r.y + 1, 18, 16)
+  pygame.draw.ellipse(SCREEN, body_col, body)
+  pygame.draw.ellipse(SCREEN, body_col, head)
+  pygame.draw.polygon(SCREEN, body_col, [(body.x + 3, body.y + 5), (r.x - 10, r.y + 8), (body.x + 4, body.y + 14)])
+  pygame.draw.line(SCREEN, body_col, (body.x + 8, body.bottom - 1), (body.x + 6, body.bottom + 14), 4)
+  pygame.draw.line(SCREEN, body_col, (body.x + 24, body.bottom - 1), (body.x + 28, body.bottom + 14), 4)
+  pygame.draw.line(SCREEN, body_col, (body.right - 4, body.y + 6), (body.right + 10, body.y + 9), 3)
+  pygame.draw.line(SCREEN, body_col, (body.right - 7, body.y + 11), (body.right + 11, body.y + 14), 3)
+  pygame.draw.arc(SCREEN, body_col, (r.x + 8, r.y + 22, 26, 26), 1.2, 4.8, 3)
+  pygame.draw.circle(SCREEN, (245,245,245), (head.x + 11, head.y + 6), 2)
+  pygame.draw.circle(SCREEN, hi, (body.x + 22, body.y + 9), 4)
+  return r
+
+
 def draw_dino(app):
   g = app.game
   draw_background("dino")
-  for i, ox in enumerate((90, 260, 480)):
-    y = 95 + i * 18
-    pygame.draw.ellipse(SCREEN, (255,255,255), (ox, y, 95, 26))
-    pygame.draw.ellipse(SCREEN, (255,255,255), (ox + 25, y - 12, 55, 30))
-  pygame.draw.line(SCREEN, (154, 135, 103), (0, g.ground + 36), (WIDTH, g.ground + 36), 3)
+  # cel i decoració
+  pygame.draw.circle(SCREEN, (255, 214, 98), (575, 105), 42)
+  pygame.draw.circle(SCREEN, (255, 235, 160), (575, 105), 48, 3)
+  for i, ox in enumerate((80, 255, 455)):
+    y = 96 + i * 20
+    pygame.draw.ellipse(SCREEN, (255,255,255,220), (ox, y, 95, 24))
+    pygame.draw.ellipse(SCREEN, (255,255,255,220), (ox + 30, y - 13, 54, 28))
+  # muntanyes i dunes
+  for color, pts in [((173, 138, 96), [(0, 445), (110, 365), (225, 445), (350, 335), (510, 445), (700, 445), (700, 750), (0, 750)]),
+                     ((205, 169, 116), [(0, 500), (160, 430), (300, 500), (470, 420), (700, 500), (700, 750), (0, 750)]),
+                     ((231, 198, 140), [(0, 565), (160, 520), (330, 560), (510, 510), (700, 560), (700, 750), (0, 750)])]:
+    pygame.draw.polygon(SCREEN, color, pts)
+  # arbres llunyans
+  for tx in (70, 230, 520, 620):
+    pygame.draw.line(SCREEN, (104, 81, 48), (tx, 480), (tx, 447), 3)
+    pygame.draw.ellipse(SCREEN, (95, 126, 65), (tx - 18, 432, 36, 18))
+    pygame.draw.ellipse(SCREEN, (95, 126, 65), (tx - 9, 418, 18, 18))
+  pygame.draw.line(SCREEN, (153, 135, 103), (0, g.ground + 36), (WIDTH, g.ground + 36), 3)
   for x in range(0, WIDTH, 26):
     pygame.draw.line(SCREEN, (194, 174, 139), (x, g.ground + 44), (x + 12, g.ground + 44), 2)
-  for ox, oy, ow, oh in g.obstacles:
-    r = pygame.Rect(int(ox), int(oy), int(ow), int(oh))
-    pygame.draw.rect(SCREEN, (63, 123, 76), r, border_radius=4)
-    pygame.draw.rect(SCREEN, (44, 87, 55), r, 2, border_radius=4)
-    pygame.draw.line(SCREEN, (44,87,55), (r.x + 6, r.y + 10), (r.x + 6, r.y - 12), 3)
-    pygame.draw.line(SCREEN, (44,87,55), (r.right - 6, r.y + 13), (r.right - 6, r.y - 5), 3)
-  r = g.player_rect()
-  pygame.draw.rect(SCREEN, (74, 78, 80), r, border_radius=4)
-  pygame.draw.rect(SCREEN, (53, 57, 58), (r.x + 26, r.y - 14, 18, 18), border_radius=4)
-  pygame.draw.circle(SCREEN, (245,245,245), (r.x + 34, r.y - 5), 2)
-  pygame.draw.line(SCREEN, (74,78,80), (r.x + 8, r.bottom), (r.x + 5, r.bottom + 18), 4)
-  pygame.draw.line(SCREEN, (74,78,80), (r.x + 25, r.bottom), (r.x + 27, r.bottom + 18), 4)
-  pygame.draw.line(SCREEN, (74,78,80), (r.right - 5, r.y + 12), (r.right + 12, r.y + 18), 4)
-  pygame.draw.line(SCREEN, (74,78,80), (r.x + 4, r.y + 8), (r.x - 16, r.y - 3), 4)
+  for h in g.hazards:
+    draw_dino_hazard(h)
+  draw_dino_player(g)
   home_label('Dino Run', (WIDTH//2, 30), TITLE_FONT, TEXT_COLOR)
   s1 = FONT.render(f'Puntuació: {g.score}', True, TEXT_COLOR)
-  s2 = SMALL.render(f'Rècord: {SAVE.get("dino_best",0)}', True, SOFT_TEXT)
+  s2 = SMALL.render(f'Temps: {g.seconds:.1f}s  ·  Rècord: {SAVE.get("dino_best",0)}', True, SOFT_TEXT)
   SCREEN.blit(s1, (WIDTH - 30 - s1.get_width(), 20))
   SCREEN.blit(s2, (WIDTH - 30 - s2.get_width(), 48))
-  t = SMALL.render('Espai / W / ↑ / clic per saltar', True, SOFT_TEXT)
+  t = SMALL.render('Espai / W / ↑ / clic per saltar · aguanta més temps per sumar més punts', True, SOFT_TEXT)
   SCREEN.blit(t, (24, 24))
+  legend = SMALL.render('Trampes: cactus, doble cactus, roca, bidó, ocell, jeep i bala', True, SOFT_TEXT)
+  SCREEN.blit(legend, (24, 50))
   draw_footer(app)
 
 
@@ -16103,7 +16187,8 @@ class DinoRun:
     self.vy = 0.0
     self.gravity = 0.92
     self.jump_force = -15.3
-    self.obstacles = []
+    self.hazards = []
+    self.obstacles = self.hazards
     self.score = 0
     self.speed = 8.0
     self.spawn_cd = 55
@@ -16112,20 +16197,56 @@ class DinoRun:
     self.move_count = 0
     self.last_move = None
     self.stack = []
+    self.seconds = 0.0
 
   def player_rect(self):
-    return pygame.Rect(112, int(self.y) - 50, 44, 50)
+    return pygame.Rect(112, int(self.y) - 56, 48, 56)
 
   def jump(self):
     if self.y >= self.ground - 0.5 and not self.winner:
       self.vy = self.jump_force
 
+  def spawn_hazard(self):
+    pool = [('cactus', 24), ('double_cactus', 10), ('rock', 12), ('barrel', 11)]
+    if self.score >= 90:
+      pool.append(('bird', 9))
+    if self.score >= 140:
+      pool.append(('jeep', 8))
+    if self.score >= 190:
+      pool.append(('bullet', 8))
+    total = sum(w for _, w in pool)
+    pick = random.uniform(0, total)
+    acc = 0
+    kind = pool[0][0]
+    for k, w in pool:
+      acc += w
+      if pick <= acc:
+        kind = k
+        break
+    if kind == 'cactus':
+      return {'type':kind, 'x':WIDTH + random.randint(0, 60), 'y':self.ground - 54, 'w':24, 'h':54, 'vx':self.speed}
+    if kind == 'double_cactus':
+      return {'type':kind, 'x':WIDTH + random.randint(0, 60), 'y':self.ground - 58, 'w':42, 'h':58, 'vx':self.speed + 0.4}
+    if kind == 'rock':
+      return {'type':kind, 'x':WIDTH + random.randint(0, 40), 'y':self.ground - 22, 'w':34, 'h':22, 'vx':self.speed + 0.6}
+    if kind == 'barrel':
+      return {'type':kind, 'x':WIDTH + random.randint(0, 40), 'y':self.ground - 28, 'w':28, 'h':28, 'vx':self.speed + 1.0}
+    if kind == 'bird':
+      return {'type':kind, 'x':WIDTH + 20, 'y':self.ground - random.choice((95, 120, 145)), 'w':48, 'h':28, 'vx':self.speed + 2.4}
+    if kind == 'jeep':
+      return {'type':kind, 'x':WIDTH + 10, 'y':self.ground - 34, 'w':86, 'h':34, 'vx':self.speed + 2.0}
+    return {'type':'bullet', 'x':-70, 'y':self.ground - random.choice((18, 24)), 'w':34, 'h':10, 'vx':-(11.0 + self.score / 130.0)}
+
+  def hazard_rect(self, h):
+    return dino_hazard_rect(h)
+
   def update(self):
     if self.winner:
       return
     self.move_count += 1
-    self.score = max(self.score, self.move_count // 3)
-    self.speed = 8.0 + min(8.0, self.score / 110.0)
+    self.seconds = self.move_count / 60.0
+    self.score = int(self.seconds * 10)
+    self.speed = 8.0 + min(9.0, self.seconds * 0.23)
     self.vy += self.gravity
     self.y += self.vy
     if self.y > self.ground:
@@ -16133,21 +16254,34 @@ class DinoRun:
       self.vy = 0.0
     self.spawn_cd -= 1
     if self.spawn_cd <= 0:
-      h = random.choice((32, 42, 52))
-      w = random.choice((18, 22, 28))
-      self.obstacles.append([WIDTH + random.randint(0, 60), self.ground + 2 - h, w, h])
-      self.spawn_cd = max(24, random.randint(40, 68) - self.score // 30)
-    for ob in self.obstacles:
-      ob[0] -= self.speed
-    self.obstacles = [ob for ob in self.obstacles if ob[0] + ob[2] > -8]
-    pr = self.player_rect().inflate(-6, -4)
-    for ox, oy, ow, oh in self.obstacles:
-      if pr.colliderect(pygame.Rect(int(ox), int(oy), int(ow), int(oh)).inflate(-2, -2)):
+      self.hazards.append(self.spawn_hazard())
+      self.spawn_cd = max(18, int(random.randint(34, 70) - min(26, self.seconds * 1.4)))
+    for h in self.hazards:
+      if h['type'] == 'bullet':
+        h['x'] -= h['vx']
+      else:
+        h['x'] -= h['vx']
+        if h['type'] in ('barrel', 'rock'):
+          h['y'] += math.sin((self.move_count + h['x']) * 0.08) * 0.2
+    self.hazards = [h for h in self.hazards if -120 < h['x'] + h['w'] < WIDTH + 140]
+    self.obstacles = self.hazards
+    pr = self.player_rect().inflate(-12, -6)
+    for h in self.hazards:
+      hr = self.hazard_rect(h)
+      if h['type'] == 'bird':
+        hr = hr.inflate(-8, -8)
+      elif h['type'] == 'jeep':
+        hr = hr.inflate(-8, -4)
+      elif h['type'] == 'bullet':
+        hr = hr.inflate(-4, -2)
+      else:
+        hr = hr.inflate(-3, -2)
+      if pr.colliderect(hr):
         self.winner = True
         break
 
 
-# Fons independents dels taulers i les fitxes. Els patrons es calculen una vegada.
+# Fons independents dels taulers# Fons independents dels taulers i les fitxes. Els patrons es calculen una vegada.
 ACTIVE_BACKGROUND = "menu"
 FRAME_COLOR = (213,226,233)
 _BROWSER_FRAME = None
@@ -16155,6 +16289,7 @@ _FRAME_SURFACE = None
 _FRAME_TILE = None
 _FRAME_TILE_KEY = None
 _BACKGROUND_CACHE = {}
+_BG_IMAGE_CACHE = {}
 
 def background_selector_rects():
   return pygame.Rect(222,61,34,32), pygame.Rect(444,61,34,32)
@@ -16166,6 +16301,24 @@ def background_palette(target, key=None):
   item=BACKGROUND_THEMES[key]
   return (*item["palette"],item["motif"])
 
+
+def load_background_photo(filename):
+  if not filename:
+    return None
+  if filename in _BG_IMAGE_CACHE:
+    return _BG_IMAGE_CACHE[filename]
+  image = None
+  for root in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
+    path = os.path.join(root, "assets", "backgrounds", filename)
+    if os.path.exists(path):
+      try:
+        image = pygame.image.load(path).convert()
+        break
+      except pygame.error:
+        pass
+  _BG_IMAGE_CACHE[filename] = image
+  return image
+
 def background_surface(target, key=None, size=(WIDTH,HEIGHT)):
   key=key if key is not None else SAVE["backgrounds"].get(target,"auto")
   ck=(target,key,size)
@@ -16175,6 +16328,28 @@ def background_surface(target, key=None, size=(WIDTH,HEIGHT)):
   for y in range(h):
     k=y/max(1,h-1)
     pygame.draw.line(surf,tuple(round(a+(b-a)*k) for a,b in zip(top,bottom)),(0,y),(w,y))
+  item = BACKGROUND_THEMES.get(key, {}) if key in BACKGROUND_THEMES else {}
+  if item.get("image"):
+    photo = load_background_photo(item.get("image"))
+    if photo is not None:
+      iw, ih = photo.get_size()
+      scale = max(w / max(1, iw), h / max(1, ih))
+      pw, ph = max(1, round(iw * scale)), max(1, round(ih * scale))
+      photo = pygame.transform.smoothscale(photo, (pw, ph))
+      surf.blit(photo, ((w - pw) // 2, (h - ph) // 2))
+      tint = pygame.Surface(size, pygame.SRCALPHA)
+      tint.fill((*top, 58))
+      surf.blit(tint, (0, 0))
+      haze = pygame.Surface(size, pygame.SRCALPHA)
+      for yy in range(h):
+        kk = yy / max(1, h - 1)
+        col = tuple(round(a + (b - a) * kk) for a, b in zip(top, bottom))
+        pygame.draw.line(haze, (*col, 28), (0, yy), (w, yy))
+      surf.blit(haze, (0, 0))
+      vign = pygame.Surface(size, pygame.SRCALPHA)
+      pygame.draw.rect(vign, (0, 0, 0, 26), (0, 0, w, h), 0, border_radius=1)
+      pygame.draw.rect(vign, (255, 255, 255, 16), (10, 10, w - 20, h - 20), 2, border_radius=16)
+      surf.blit(vign, (0, 0))
   layer=pygame.Surface(size,pygame.SRCALPHA)
   c=(*accent,38)
   step=max(12,w//14)
@@ -16223,6 +16398,9 @@ def background_surface(target, key=None, size=(WIDTH,HEIGHT)):
       for x in range(step//2+(j%2)*step,w,step*2):
         pygame.draw.ellipse(layer,c,(x,y,max(5,step//2),max(3,step//5)),1)
         pygame.draw.line(layer,c,(x,y+step//5),(x+step//2,y),1)
+  elif motif=="photo":
+    for y in range(0,h,step*2):
+      pygame.draw.line(layer,(*accent,18),(0,y),(w,y),1)
   else:
     for i in range(3):
       yy=int(h*(.67+i*.11)); pts=[(0,h)] + [(x, int(yy+math.sin(x/max(1,w)*7+i)*h*.065)) for x in range(0,w+max(1,w//20),max(1,w//20))] + [(w,h)]
