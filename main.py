@@ -16175,7 +16175,16 @@ class DinoRun:
     self.duck_timer=max(0,self.duck_timer-1); self.invuln=max(0,self.invuln-1); self.magnet=max(0,self.magnet-1); self.notice_timer=max(0,self.notice_timer-1)
     # Plataformes unidireccionals: es travessen de baix cap amunt,
     # i només s'hi aterra quan els peus creuen la superfície en caure.
-    for p in self.platforms: p['x']-=p['speed']
+    # No es generen obstacles nous fins a deixar enrere el tram doble.
+    if not self.platforms and not any(not h.get('passed',False) for h in self.hazards):
+      self.spawn_cd-=1
+      if self.spawn_cd<=0:
+        self.spawn(); self.spawn_cd=max(18,49-int(self.seconds*.35))
+    for p in self.platforms:
+      p['speed']=self.speed
+      p['x']-=self.speed
+    for h in self.hazards:
+      if h.get('lane') in ('upper','lower'): h['vx']=-self.speed
     self.platforms=[p for p in self.platforms if p['x']+p['w']>DINO_X-20]
     old_y=self.y
     self.vy+=self.gravity; self.y+=self.vy
@@ -16191,11 +16200,6 @@ class DinoRun:
             p['visited']=True; self.upper_entries+=1; self.notice='Carril superior!'; self.notice_timer=85
       self.y=float(floor); self.vy=0.; self.jumps=0
       if floor<self.ground: self.upper_frames+=1
-    # No es generen obstacles nous fins a deixar enrere el tram doble.
-    if not self.platforms and not any(not h.get('passed',False) for h in self.hazards):
-      self.spawn_cd-=1
-      if self.spawn_cd<=0:
-        self.spawn(); self.spawn_cd=max(18,49-int(self.seconds*.35))
     pr=self.player_rect().inflate(-12,-8)
     for h in self.hazards[:]:
       if h['warn']>0: h['warn']-=1; continue
@@ -16704,22 +16708,22 @@ class DinoRun(_DinoBase):
       self.waves+=1; self.last_kind='platform'
       x=float(WIDTH+12); y=self.ground-172; speed=self.speed
       long_bridge=self.seconds>=24 and random.random()<.55
-      width=760 if long_bridge else 520
+      width=1700 if long_bridge else 900
       self.platforms.append({'x':x,'y':y,'w':width,'speed':speed,'long':long_bridge})
       # Carril inferior: obstacles espaiats perquè segueixi sent una ruta segura.
       lower_pattern=['cactus'] if not long_bridge else ['cactus','rock']
-      lower_offsets=[255] if not long_bridge else [245, 565]
+      lower_offsets=[220] if not long_bridge else [220, 1000]
       for kind,off in zip(lower_pattern,lower_offsets):
         w,h=DINO_HAZARDS[kind]
         self.hazards.append({'type':kind,'x':x+off,'y':float(self.ground-h),'w':w,'h':h,'vx':-speed,'warn':0,'lane':'lower'})
       # Carril superior: monedes i una o dues trampes pròpies del pont.
       coin_count=10 if long_bridge else 7
-      spacing=55 if long_bridge else 53
+      spacing=155 if long_bridge else 110
       for i in range(coin_count):
         arc=(18 if i%4==1 else 10 if i%4==2 else 0)
         self.pickups.append({'kind':'coin','x':x+82+i*spacing,'y':float(y-24-arc)})
       upper_pattern=['upper_spike'] if not long_bridge else ['upper_spike','upper_totem']
-      upper_offsets=[308] if not long_bridge else [300, 590]
+      upper_offsets=[650] if not long_bridge else [650, 1450]
       for kind,off in zip(upper_pattern,upper_offsets):
         w,h=DINO_HAZARDS[kind]
         self.hazards.append({'type':kind,'x':x+off,'y':float(y-h),'w':w,'h':h,'vx':-speed,'warn':0,'lane':'upper'})
