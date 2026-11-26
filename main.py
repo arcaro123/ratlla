@@ -16849,7 +16849,7 @@ def draw_dino(app):
     dino_ui_button(rects['mode'],_DINO_MODES[g.mode_id][0]+'  >')
     dino_ui_button(rects['skin'],_DINO_SKINS[g.skin][0]+'  >')
     dino_text({'endless':'Sense límit','sprint':'60 segons','expedition':'120 segons'}[g.mode_id],(210,362),SMALL)
-    preview=pygame.transform.scale(dino_skin_sprite('run',0,g.skin),(105,85)); SCREEN.blit(preview,preview.get_rect(center=(490,385)))
+    preview=dino_animated_image('idle',pygame.time.get_ticks()//95,g.skin,(105,85)); SCREEN.blit(preview,preview.get_rect(center=(490,385)))
     dino_text('Rècord: '+str(SAVE.get('dino_best',0)),(210,400),FONT,(237,203,117))
     dino_ui_button(rects['start'],'JUGAR',True)
     dino_ui_button(rects['menu'],'< Menú')
@@ -17186,6 +17186,191 @@ def process_extra_clean(app,events):
 
 App.draw_extra=draw_extra_clean
 App.process_extra=process_extra_clean
+
+
+# ---------------------------------------------------------------
+# DINO RUN — animacions visuals independents de la física
+# ---------------------------------------------------------------
+_DINO_ANIM_CACHE = {}
+_DINO_ANIM_SCALE = {}
+
+def dino_skin_sprite(pose, phase, skin):
+  """12 fotogrames de carrera i postures diferenciades a l'aire."""
+  phase = int(phase) % 12
+  key = (pose, phase, skin)
+  if key in _DINO_ANIM_CACHE: return _DINO_ANIM_CACHE[key]
+  s = pygame.Surface((80,64), pygame.SRCALPHA)
+  base = _DINO_SKINS[skin][2]
+  edge = dino_mix(base,(19,30,29),.77)
+  shade = dino_mix(base,(19,30,29),.40)
+  light = dino_mix(base,(232,229,174),.34)
+  belly = dino_mix((220,207,150),base,.13)
+  a = phase*math.tau/12
+  run = pose=='run'
+  bob = round(1.6*math.cos(2*a)) if run else round(math.sin(a)*1.1) if pose=='idle' else 0
+  tuck = 0 if pose in ('run','idle') else 4 if pose in ('jump','rise') else 2
+  if pose=='land': bob=4
+  if pose=='hit': bob=2
+  tail=round(4*math.sin(a-.7)) if run or pose=='idle' else -3 if pose in ('rise','jump') else 3
+  def poly(points,c): pygame.draw.polygon(s,c,[(round(x),round(y)) for x,y in points])
+  def line(points,c,w=1): pygame.draw.lines(s,c,False,[(round(x),round(y)) for x,y in points],w)
+  # Cames articulades, desfasades mig cicle. La més llunyana queda darrere.
+  def leg(far):
+    p=a+(math.pi if far else 0); hip=(37 if far else 44,43+bob)
+    if run:
+      knee=(hip[0]+8*math.sin(p),50+bob-3*max(0,math.cos(p)))
+      foot=(hip[0]+13*math.sin(p-.55),59-9*max(0,math.cos(p)))
+    elif pose in ('rise','jump','fall'):
+      knee=(hip[0]+(6 if far else -3),48-tuck)
+      foot=(hip[0]+(-5 if far else 7),55-tuck-(3 if far else 0))
+    else:
+      knee=(hip[0]-3,51+bob//2); foot=(hip[0]+(0 if far else 4),59)
+    line([hip,knee,foot],edge,8); line([hip,knee,foot],shade if far else base,5)
+    x,y=map(round,foot); pygame.draw.rect(s,edge,(x-3,y-2,11,5)); pygame.draw.rect(s,shade if far else light,(x-2,y-2,8,2))
+    pygame.draw.line(s,belly,(x+6,y),(x+7,y),1)
+  leg(True)
+  # Cua llarga amb oscil·lació i un cos de T. rex amb cap gran.
+  poly([(2,24+tail),(12,30+tail//2),(23,34+bob),(31,28+bob),(37,20+bob),(42,8+bob),(48,3+bob),(70,3+bob),(77,8+bob),(77,21+bob),(63,21+bob),(63,27+bob),(55,29+bob),(53,41+bob),(47,49+bob),(34,49+bob),(25,43+bob),(13,37),(4,31+tail)],edge)
+  poly([(5,27+tail),(15,33+tail//2),(24,37+bob),(33,31+bob),(40,20+bob),(45,10+bob),(50,6+bob),(69,6+bob),(74,10+bob),(74,18+bob),(60,18+bob),(60,25+bob),(53,27+bob),(50,40+bob),(45,46+bob),(35,46+bob),(27,40+bob),(15,35)],base)
+  poly([(26,36+bob),(34,28+bob),(42,17+bob),(46,10+bob),(51,7+bob),(66,7+bob),(61,10+bob),(50,12+bob),(46,24+bob),(39,34+bob),(34,39+bob)],light)
+  poly([(55,27+bob),(51,39+bob),(45,46+bob),(36,46+bob),(34,43+bob),(41,40+bob),(47,29+bob),(51,24+bob)],belly)
+  for x,y,w in [(29,37,4),(34,32,4),(40,25,3),(44,19,3),(52,10,4),(57,9,3)]:
+    pygame.draw.rect(s,shade,(x,y+bob,w,2))
+  leg(False)
+  arm=round(2*math.sin(a)) if run else 0
+  line([(50,29+bob),(54,35+bob+arm),(61,33+bob+arm)],edge,5)
+  line([(50,29+bob),(54,34+bob+arm),(60,32+bob+arm)],base,2)
+  # Ull expressiu, nariu i mandíbula.
+  blink=pose=='idle' and phase==11
+  pygame.draw.rect(s,edge,(62,10+bob,7,5 if not blink else 2),border_radius=1)
+  if not blink: pygame.draw.rect(s,(255,240,188),(63,10+bob,2,2))
+  pygame.draw.rect(s,shade,(72,13+bob,2,2)); line([(62,19+bob),(75,19+bob)],edge,1)
+  if pose=='hit': line([(62,9+bob),(68,15+bob)],edge,2); line([(68,9+bob),(62,15+bob)],edge,2)
+  _DINO_ANIM_CACHE[key]=s
+  return s
+
+
+def dino_animated_image(pose,phase,skin,size):
+  key=(pose,int(phase)%12,skin,size)
+  if key not in _DINO_ANIM_SCALE:
+    if len(_DINO_ANIM_SCALE)>450: _DINO_ANIM_SCALE.clear()
+    _DINO_ANIM_SCALE[key]=pygame.transform.scale(dino_skin_sprite(pose,phase,skin),size)
+  return _DINO_ANIM_SCALE[key]
+
+
+def dino_draw_player(g):
+  r=g.player_rect(); height=max(0.,g.ground-g.y)
+  phase=int(g.distance/6)%12
+  if g.winner and not g.complete: pose='hit'
+  elif height>1: pose='rise' if g.vy<-2 else 'jump' if g.vy<3 else 'fall'
+  elif getattr(g,'landing_anim',0)>0: pose='land'
+  else: pose='run'
+  # Ombra que s'encongeix mentre el personatge puja.
+  w=max(30,76-round(height*.22)); h=max(6,13-round(height*.035))
+  shadow=pygame.Surface((w,h),pygame.SRCALPHA)
+  pygame.draw.ellipse(shadow,(27,32,29,max(18,83-round(height*.33))),shadow.get_rect())
+  SCREEN.blit(shadow,shadow.get_rect(center=(r.centerx,g.ground+3)))
+  if not (g.invuln and g.move_count//4%2):
+    stretch=2 if pose=='rise' else -5 if pose=='land' else 0
+    img=dino_animated_image(pose,phase,g.skin,(88-stretch,70+stretch))
+    SCREEN.blit(img,img.get_rect(midbottom=(r.centerx,round(g.y)+2)))
+  if g.shield:
+    glow=pygame.Surface((100,100),pygame.SRCALPHA)
+    pulse=round(15*math.sin(g.move_count*.14)); pygame.draw.circle(glow,(73,214,231,24),(50,50),42)
+    pygame.draw.circle(glow,(104,235,245,170+pulse),(50,50),42,2)
+    ang=g.move_count*.05
+    for i in range(3):
+      t=ang+i*math.tau/3; pygame.draw.circle(glow,(208,255,247,230),(round(50+42*math.cos(t)),round(50+42*math.sin(t))),3)
+    SCREEN.blit(glow,glow.get_rect(center=r.center))
+  for p in g.particles:
+    pygame.draw.circle(SCREEN,p['color'],(round(p['x']),round(p['y'])),max(1,min(4,p['life']//7)))
+  for p in g.floaters: dino_text(p['text'],(round(p['x']),round(p['y'])),SMALL,p['color'])
+
+_dino_anim_old_step = DinoRun.step
+
+def _dino_anim_step(self):
+  was_air=self.y<self.ground-1
+  self.landing_anim=max(0,getattr(self,'landing_anim',0)-1)
+  _dino_anim_old_step(self)
+  if was_air and self.y>=self.ground-.5:
+    self.landing_anim=5
+    self.emit(DINO_X+27,self.ground-3,(211,181,125),12)
+  elif self.y>=self.ground-.5 and self.move_count%5==0 and not self.winner:
+    self.emit(DINO_X+8,self.ground-4,(211,181,125),2)
+DinoRun.step=_dino_anim_step
+
+_dino_anim_old_hazard=dino_draw_hazard
+
+def dino_draw_hazard(h,g):
+  if h.get('warn',0)>0: return
+  r=dino_rect(h); k=h['type']; t=g.move_count
+  if k in ('bird','highbird'):
+    x,y=r.center; flap=math.sin(t*.24)*13
+    pygame.draw.polygon(SCREEN,(48,63,66),[(r.x+2,y),(x-12,y-5),(x+6,y-4),(r.right+5,y-8),(r.right-3,y+5),(x-9,y+9)])
+    pygame.draw.polygon(SCREEN,(90,111,110),[(x-10,y),(x+5,y+flap),(x+21,y+flap*1.5),(x+12,y+3),(x+2,y+6)])
+    pygame.draw.line(SCREEN,(150,167,153),(x+5,y+round(flap)),(x+19,y+round(flap*1.4)),2)
+    pygame.draw.circle(SCREEN,(48,63,66),(r.x+7,y-5),7)
+    pygame.draw.polygon(SCREEN,(221,174,78),[(r.x+2,y-7),(r.x-6,y-2),(r.x+2,y+1)])
+    pygame.draw.circle(SCREEN,(255,236,185),(r.x+5,y-7),2)
+  elif k=='jeep':
+    _dino_anim_old_hazard(h,g)
+    a=t*.42
+    for x in (r.x+19,r.right-20):
+      y=r.bottom-10
+      for i in range(3):
+        q=a+i*math.tau/3; pygame.draw.line(SCREEN,(218,218,185),(x,y),(round(x+6*math.cos(q)),round(y+6*math.sin(q))),2)
+      pygame.draw.circle(SCREEN,(52,61,56),(x,y),2)
+    for i in range(5):
+      d=(t*3+i*9)%40
+      pygame.draw.circle(SCREEN,(183,151,103),(r.right+d,r.bottom-3-i%3*3),max(1,5-d//9))
+  elif k=='drone':
+    _dino_anim_old_hazard(h,g)
+    w=7+round(7*abs(math.sin(t*.55)))
+    for x in (r.x+5,r.right-5): pygame.draw.line(SCREEN,(175,210,215),(x-w,r.y-3),(x+w,r.y-3),2)
+    if t%24<12: pygame.draw.circle(SCREEN,(255,230,135),r.center,4)
+  else:
+    _dino_anim_old_hazard(h,g)
+    if k in ('barrel','orb','tumble'):
+      a=t*.23
+      pygame.draw.circle(SCREEN,(233,194,131),(r.centerx+round(math.cos(a)*r.w*.30),r.centery+round(math.sin(a)*r.h*.30)),2)
+    elif k=='crystal':
+      x=r.centerx; y=r.y+8+round(14*(1+math.sin(t*.09)))
+      pygame.draw.line(SCREEN,(220,249,248),(x-3,y),(x+3,y),1)
+      pygame.draw.line(SCREEN,(220,249,248),(x,y-3),(x,y+3),1)
+
+_dino_anim_old_pickup=dino_draw_pickup
+
+def dino_draw_pickup(p,g):
+  _dino_anim_old_pickup(p,g)
+  if p['kind']=='coin':
+    t=g.move_count*.12+p['x']*.04
+    if math.sin(t)>.82:
+      x,y=round(p['x'])+5,round(p['y'])-8
+      pygame.draw.line(SCREEN,(255,247,191),(x-3,y),(x+3,y),1)
+      pygame.draw.line(SCREEN,(255,247,191),(x,y-3),(x,y+3),1)
+  else:
+    x,y=round(p['x']),round(p['y']); rad=15+round(2*math.sin(g.move_count*.12))
+    pygame.draw.circle(SCREEN,(200,233,221),(x,y),rad,1)
+
+_dino_anim_old_landscape=dino_landscape
+
+def dino_landscape(g):
+  name=_dino_anim_old_landscape(g)
+  if SAVE['backgrounds'].get('dino','auto')!='auto': return name
+  _,top,bottom,far,near,sand,ink=dino_stage(g)
+  # Petits elements de primer pla amb paral·laxi; sense obstacles nous.
+  for i in range(14):
+    x=round((i*73-g.distance*1.07)%1022)-30; y=g.ground+48+i%4*13
+    c=dino_mix(sand,ink,.38)
+    if i%3==0: pygame.draw.ellipse(SCREEN,c,(x,y,9+i%4,4))
+    else:
+      lean=round(3*math.sin(g.move_count*.07+i))
+      pygame.draw.lines(SCREEN,c,False,[(x-4,y-7),(x,y),(x+lean,y-12)],2)
+  if name=='Nit estrellada':
+    for i in range(18):
+      x=(i*109+17)%WIDTH; y=150+(i*47)%155
+      if math.sin(g.move_count*.04+i)>.75: pygame.draw.circle(SCREEN,(249,246,214),(x,y),2)
+  return name
 
 
 async def main():
