@@ -137,6 +137,7 @@ def configure_browser():
           canvas = next;
           // Keep the original ID: the SDL runtime may reference it.
           canvas.setAttribute('data-ratlla-game','true');
+          canvas.addEventListener('contextmenu', event => event.preventDefault());
           const rule = style.textContent.replace('#ratlla-game-canvas','canvas[data-ratlla-game]');
           if (style.textContent !== rule) style.textContent = rule;
           // A transformed ancestor changes the reference frame of a fixed element.
@@ -508,9 +509,10 @@ BACKGROUND_DEFAULTS = {
     "chess": ((244,247,249),(198,213,228),(125,155,181),"grid"),
     "go": ((245,248,231),(193,215,172),(129,163,111),"leaves"),
     "shogi": ((253,244,229),(239,211,184),(189,143,116),"waves"),
+    "mines": ((181,211,199),(86,137,133),(42,83,90),"grid"),
     "dino": ((250,248,234),(239,219,177),(185,151,106),"hills"),
 }
-BG_TARGETS = {"menu":"Tots els menús", "morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go", "shogi":"Shogi", "dino":"Dino Run"}
+BG_TARGETS = {"menu":"Tots els menús", "morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go", "shogi":"Shogi", "dino":"Dino Run", "mines":"Buscamines"}
 SHOP_BG_TARGET = "menu"
 
 SHOP_TABS = (("backgrounds", "Fons"), ("boards", "Taulers"), ("pieces", "Fitxes"), ("marks", "Marques"),
@@ -673,6 +675,7 @@ def default_save():
       "equipped": {"boards": "classic", "pieces": "classic",
                    "marks": "orange", "fx": "none"},
       "items": {"hints": 0, "undos": 0, "double": 0},
+      "mine_profile": {"wins":{},"best":{}},
       "dino_best": 0,
       "dino_profile": {"runs":0,"coins":0,"time":0,"sprint":0,"expedition":0,"skin":0,"mode":"endless"},
       "records": {
@@ -742,6 +745,12 @@ def load_save():
         data["slots"] = (loaded["slots"] + [None] * 10)[:10]
       data["clean_wins"] = max(0, int(loaded.get("clean_wins", 0)))
       data["dino_best"] = max(0, int(loaded.get("dino_best", 0)))
+      mp=loaded.get("mine_profile",{})
+      if isinstance(mp,dict):
+        for field in ("wins","best"):
+          if isinstance(mp.get(field),dict):
+            for k,v in mp[field].items():
+              if k in ("mine_easy","mine_normal","mine_hard") and isinstance(v,(int,float)) and v>=0: data["mine_profile"][field][k]=v
       profile=loaded.get("dino_profile",{})
       if isinstance(profile,dict):
         for k in ("runs","coins","time","sprint","expedition","skin"):
@@ -2965,7 +2974,7 @@ LOCAL_NAMES = {
     "go": ("Negres", "Blanques"),
 }
 GAME_TITLES = {"morris": "Tres en ratlla", "c4": "4 en ratlla",
-               "chess": "Escacs", "go": "Go 9x9", "dino": "Dino Run"}
+               "chess": "Escacs", "go": "Go 9x9", "dino": "Dino Run", "mines": "Buscamines"}
 
 
 def draw_text_for(g, kind):
@@ -4207,12 +4216,15 @@ class App:
           ("go", "GO 9x9", "Domina el territori", True),
           ("shogi", "SHOGI", "Escacs japonesos", True),
           ("dino", "DINO RUN", "Sense connexió", True),
+          ("mines", "BUSCAMINES", "Rescat de robots", True),
           ("shop", "BOTIGA", "Personalitza", True),
           ("settings", "CONFIGURACIÓ", "Opcions del joc", True),
           ("saves", "PARTIDES", "Desa i continua", True),
           ("achievements", "ASSOLIMENTS", "Els teus reptes", True),
       ], "Tria un joc per començar")
     if s == "modes":
+      if self.kind == "mines":
+        return ("Buscamines: Rescat", "Tria la dificultat", [(k,name.upper(),f"{n} × {n} · {m} mines · +{pts} punts",True) for k,(name,n,m,pts) in MINE_LEVELS.items()]+[("guide","COM ES JUGA","Aprèn amb exemples",True)], "Tria una missió · M = enrere")
       if self.kind == "dino":
         return (GAME_TITLES[self.kind], "Tria què vols fer", [
             ("solo", "JUGAR", "Corre, salta i esquiva obstacles", True),
@@ -4266,7 +4278,7 @@ class App:
       return
     s = self.state
     if s == "main":
-      if pick in GAMES or pick == "dino":
+      if pick in GAMES or pick in ("dino","mines"):
         self.kind = pick
         self.state = "modes"
       elif pick == "shop":
@@ -4287,7 +4299,9 @@ class App:
         self.demo = -1
       else:
         self.mode = pick
-        if self.kind == "dino":
+        if self.kind == "mines":
+          self.mine_level=pick; self.start_game()
+        elif self.kind == "dino":
           self.start_game()
         elif pick == "bot":
           self.state = "diff"
@@ -4463,6 +4477,10 @@ class App:
 
   # ---------- inici / final de partida ----------
   def start_game(self):
+    if self.kind == "mines":
+      self.game=MinesRun(getattr(self,"mine_level","mine_normal")); self.slot=None
+      self.me=self.bot_role=self.bot=None; self.mode="solo"; self.reset_view()
+      self.assisted=self.hinted=False; self.state="play"; return
     if self.kind == "dino":
       self.game = DinoRun()
       self.slot = None
@@ -4519,7 +4537,7 @@ class App:
       self.anim_key = (self.game.move_count, self.game.last_move)
 
   def restart(self):
-    if self.kind == "dino" and self.slot is not None:
+    if self.kind in ("dino","mines") and self.slot is not None:
       SAVE["slots"][self.slot]=None; self.slot=None; write_save()
     if self.mode == "online":
       new_count = self.game.move_count + 1
@@ -4538,6 +4556,17 @@ class App:
 
   def finish(self):
     g, kind, mode = self.game, self.kind, self.mode
+    if kind == "mines":
+      if g.rewarded: return
+      g.rewarded=True; won=g.winner=='win'; points=g.reward if won else 0
+      profile=SAVE['mine_profile']; best=profile['best'].get(g.level)
+      if won:
+        profile['wins'][g.level]=profile['wins'].get(g.level,0)+1
+        profile['best'][g.level]=round(g.seconds,1) if best is None else min(best,round(g.seconds,1))
+      SAVE['points']+=points
+      self.result=dict(title='MISSIÓ COMPLETADA!' if won else 'FI DE LA MISSIÓ',color=COLOR_WIN if won else COLOR_LOSE,lines=[f"Temps: {g.seconds:.1f} s · Robots: {len(g.rescued)}/3",f"Caselles segures: {len(g.opened)}/{g.n*g.n-g.total}",f"Botiga: +{points} punts",f"Millor temps: {profile['best'][g.level]:.1f} s" if g.level in profile['best'] else 'Torna-ho a provar!'])
+      if self.slot is not None: SAVE['slots'][self.slot]=None; self.slot=None
+      write_save(); return
     if kind == "dino":
       if g.rewarded: return
       g.rewarded=True
@@ -4766,6 +4795,7 @@ class App:
       self.hint = None
 
   def process_play(self, events):
+    if self.kind == "mines": process_mines(self,events); return
     if self.kind == "dino":
       process_dino(self, events)
       return
@@ -4866,7 +4896,7 @@ class App:
     if self.state != "play":
       return
     g = self.game
-    if self.kind == "dino":
+    if self.kind in ("dino","mines"):
       g.update(getattr(self, "frame_dt", 1/60))
       if g.winner and self.result is None:
         self.finish()
@@ -4915,7 +4945,7 @@ class App:
       self.draw_extra()
     elif self.state == "play":
       {"morris": draw_morris, "c4": draw_c4,
-       "chess": draw_chess, "go": draw_go, "shogi": draw_shogi, "dino": draw_dino}[self.kind](self)
+       "chess": draw_chess, "go": draw_go, "shogi": draw_shogi, "dino": draw_dino, "mines": draw_mines}[self.kind](self)
       if getattr(self.game, "promotion", []):
         self.draw_promotion()
       if self.result:
@@ -5329,10 +5359,11 @@ def load_slot(app,i):
   slot=SAVE['slots'][i]
   if not slot or slot['mode']=='bot' and is_locked(slot['difficulty']): return
   try:
-    game={'morris':Morris,'c4':Connect4,'chess':Chess,'go':Go,'shogi':Shogi,'dino':DinoRun}[slot['kind']]()
+    game={'morris':Morris,'c4':Connect4,'chess':Chess,'go':Go,'shogi':Shogi,'dino':DinoRun,'mines':MinesRun}[slot['kind']]()
     game.__dict__.update(decode_state(slot['game']))
     if slot['kind']=='dino': game.migrate()
     app.kind=slot['kind']; app.mode=slot['mode']; app.difficulty=slot['difficulty']; app.human_first=slot['human_first']
+    if slot['kind']=='mines': app.mine_level=game.level
     app.start_game(); app.game=game; app.slot=i; app.assisted=slot['assisted']; app.hinted=slot['hinted']; app.reset_view()
   except (ValueError,KeyError,TypeError,AttributeError): return
 
@@ -15854,24 +15885,16 @@ MENU_IMAGE_DATA = {
 }
 
 _MENU_IMAGE_CACHE = {}
-HOME_DESCRIPTIONS = {"morris":"Tres quadrats", "c4":"Connecta quatre", "chess":"Escac i mat", "go":"Domina el territori", "shogi":"Escacs japonesos", "dino":"Arcade de supervivència"}
-HOME_TITLES = {"morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go 9 × 9", "shogi":"Shogi", "dino":"Dino Run"}
+HOME_DESCRIPTIONS = {"mines":"Rescat de robots","morris":"Tres quadrats", "c4":"Connecta quatre", "chess":"Escac i mat", "go":"Domina el territori", "shogi":"Escacs japonesos", "dino":"Arcade de supervivència"}
+HOME_TITLES = {"mines":"Buscamines","morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go 9 × 9", "shogi":"Shogi", "dino":"Dino Run"}
 HOME_TOOLS = {"shop":"Botiga", "settings":"Configuració", "saves":"Partides", "achievements":"Assoliments"}
 
 
 def home_rects():
-  return {
-      "morris": pygame.Rect(35, 155, 190, 170),
-      "c4": pygame.Rect(255, 155, 190, 170),
-      "chess": pygame.Rect(475, 155, 190, 170),
-      "go": pygame.Rect(35, 345, 190, 170),
-      "shogi": pygame.Rect(255, 345, 190, 170),
-      "dino": pygame.Rect(475, 345, 190, 170),
-      "shop": pygame.Rect(72, 540, 120, 78),
-      "settings": pygame.Rect(210, 540, 120, 78),
-      "saves": pygame.Rect(348, 540, 120, 78),
-      "achievements": pygame.Rect(486, 540, 120, 78),
-  }
+  rects={k:pygame.Rect(23+i*166,155,156,170) for i,k in enumerate(('morris','c4','chess','go'))}
+  rects.update({k:pygame.Rect(106+i*166,345,156,170) for i,k in enumerate(('shogi','dino','mines'))})
+  rects.update({k:pygame.Rect(72+i*138,540,120,78) for i,k in enumerate(('shop','settings','saves','achievements'))})
+  return rects
 
 
 def main_menu_pick(opts, events):
@@ -15910,6 +15933,11 @@ def draw_dino_icon(area):
 
 
 def home_cover(key, area):
+  if key=="mines":
+    pygame.draw.rect(SCREEN,(38,68,70),area,border_radius=12)
+    for i in range(3):
+      for j in range(4): pygame.draw.rect(SCREEN,(58,94,91),(area.x+6+j*29,area.y+6+i*30,25,26),border_radius=4)
+    mine_icon(area.center,min(area.h-6,100),"mine",pygame.time.get_ticks()//120); return
   pygame.draw.rect(SCREEN, (242,223,186), area, border_radius=12)
   if key == "shogi":
     draw_menu_icon(key, area.inflate(-6, -6))
@@ -15998,7 +16026,7 @@ def draw_home_menu(app, opts, mouse):
   home_label(f"{SAVE['points']} punts", (coin.centerx + 10, coin.centery), FONT, ink)
 
   rects = home_rects()
-  for key in ('morris','c4','chess','go','shogi','dino'):
+  for key in ('morris','c4','chess','go','shogi','dino','mines'):
     r = rects[key]
     hover = r.collidepoint(mouse)
     shadow = r.move(0, 5)
@@ -16007,8 +16035,8 @@ def draw_home_menu(app, opts, mouse):
     pygame.draw.rect(SCREEN, gold if hover else (157, 127, 88), r, 3 if hover else 2, border_radius=18)
     area = pygame.Rect(r.x + 11, r.y + 11, r.w - 22, 104)
     home_cover(key, area)
-    home_label(HOME_TITLES[key], (r.centerx, r.bottom - 40), FONT, ink)
-    home_label(HOME_DESCRIPTIONS[key], (r.centerx, r.bottom - 18), SMALL, muted)
+    guide_fit(HOME_TITLES[key], (r.centerx, r.bottom - 40), FONT, ink,r.w-12)
+    guide_fit(HOME_DESCRIPTIONS[key], (r.centerx, r.bottom - 18), SMALL, muted,r.w-12)
 
   for key, label in HOME_TOOLS.items():
     r = rects[key]; hover = r.collidepoint(mouse)
@@ -17736,6 +17764,221 @@ def dino_draw_tall(h,g):
     pygame.draw.lines(SCREEN,(45,61,53),False,pts,5)
     pygame.draw.lines(SCREEN,(255,232,157),False,pts,3)
 
+
+# BUSCAMINES: RESCAT — joc individual, sense recursos externs.
+MINE_LEVELS={'mine_easy':('Fàcil',8,10,20),'mine_normal':('Normal',10,18,45),'mine_hard':('Difícil',12,28,85)}
+
+class MinesRun:
+  def __init__(self,level='mine_normal'):
+    self.level=level if level in MINE_LEVELS else 'mine_normal'
+    _,self.n,self.total,self.reward=MINE_LEVELS[self.level]
+    self.mines=set(); self.opened=set(); self.flags=set(); self.robots=set(); self.rescued=set()
+    self.counts=[]; self.started=False; self.seconds=0.; self.move_count=0; self.last_move=None
+    self.winner=None; self.draw=False; self.rewarded=False; self.shield=False; self.shield_used=False
+    self.flag_mode=False; self.hit=None; self.notice='Tria qualsevol casella per començar'; self.notice_timer=0.
+
+  def neighbors(self,i):
+    r,c=divmod(i,self.n)
+    return [rr*self.n+cc for rr in range(max(0,r-1),min(self.n,r+2)) for cc in range(max(0,c-1),min(self.n,c+2)) if (rr,cc)!=(r,c)]
+
+  def generate(self,i):
+    safe={i,*self.neighbors(i)}
+    self.mines=set(random.sample([j for j in range(self.n*self.n) if j not in safe],self.total))
+    self.counts=[sum(j in self.mines for j in self.neighbors(k)) for k in range(self.n*self.n)]
+    self.robots=set(random.sample([j for j in range(self.n*self.n) if j not in self.mines and j!=i],3))
+    self.started=True
+
+  def say(self,text):
+    self.notice=text; self.notice_timer=3.
+
+  def flag(self,i):
+    if self.winner or not 0<=i<self.n*self.n or i in self.opened: return
+    if i in self.flags: self.flags.remove(i)
+    elif len(self.flags)<self.total: self.flags.add(i)
+    else: self.say('Ja has col·locat totes les banderes'); return
+    self.move_count+=1
+
+  def reveal(self,i):
+    if self.winner or not 0<=i<self.n*self.n or i in self.flags: return
+    if not self.started: self.generate(i)
+    if i in self.opened:
+      # Obrir els veïns d'un número quan té les banderes necessàries.
+      ns=self.neighbors(i)
+      if self.counts[i] and sum(j in self.flags for j in ns)==self.counts[i]:
+        for j in ns:
+          if j not in self.flags and j not in self.opened: self.reveal(j)
+          if self.winner: break
+      return
+    self.move_count+=1; self.last_move=i
+    if i in self.mines:
+      if self.shield:
+        self.shield=False; self.shield_used=True
+        # Allibera una bandera incorrecta si ja s'han gastat totes.
+        if len(self.flags)>=self.total:
+          self.flags.remove(min(self.flags-self.mines))
+        self.flags.add(i); self.say('Escut utilitzat! Mina marcada.'); return
+      self.hit=i; self.winner='loss'; return
+    todo=[i]
+    while todo:
+      j=todo.pop()
+      if j in self.opened or j in self.flags or j in self.mines: continue
+      self.opened.add(j)
+      if j in self.robots:
+        self.rescued.add(j); self.say(f'Robot rescatat! {len(self.rescued)}/3')
+        if len(self.rescued)==3 and not self.shield_used:
+          self.shield=True; self.say('Tres robots rescatats! Escut activat.')
+      if self.counts[j]==0: todo.extend(k for k in self.neighbors(j) if k not in self.opened and k not in self.flags)
+    if len(self.opened)==self.n*self.n-self.total:
+      self.winner='win'; self.flags=set(self.mines)
+
+  def update(self,dt):
+    if self.started and not self.winner: self.seconds+=max(0,min(.2,dt))
+    self.notice_timer=max(0,self.notice_timer-dt)
+
+_MINE_ART={}
+def mine_robot(size,kind='mine',phase=0):
+  # Personatge original, inspirat en una joguina de corda arrodonida.
+  key=(size,kind,phase%8)
+  if key in _MINE_ART: return _MINE_ART[key]
+  s=pygame.Surface((100,100),pygame.SRCALPHA); bob=round(math.sin(phase*math.tau/8)*2)
+  body=(37,53,76) if kind=='mine' else (31,105,110)
+  edge=(19,29,43); gold=(209,148,49); pale=(255,219,119)
+  pygame.draw.ellipse(s,(0,0,0,65),(15,83,72,12))
+  pygame.draw.line(s,gold,(26,52+bob),(10,52+bob),6)
+  for yy in (42,59):
+    pygame.draw.ellipse(s,gold,(3,yy+bob,17,14),5); pygame.draw.arc(s,pale,(3,yy+bob,17,14),0,math.pi,2)
+  for x in (31,66):
+    pygame.draw.ellipse(s,(121,78,27),(x-9,75+bob,27,16)); pygame.draw.ellipse(s,gold,(x-8,73+bob,25,14)); pygame.draw.ellipse(s,pale,(x-5,74+bob,15,5))
+  pygame.draw.circle(s,edge,(51,51+bob),35)
+  for r in range(33,0,-1):
+    f=(33-r)/33; col=tuple(round(v+(min(255,v+76)-v)*f) for v in body)
+    pygame.draw.circle(s,col,(51-round(f*8),51+bob-round(f*9)),r)
+  pygame.draw.ellipse(s,(139,170,190),(33,25+bob,14,7))
+  pygame.draw.rect(s,(96,124,148),(42,14+bob,20,8),border_radius=3)
+  pygame.draw.line(s,(153,185,195),(52,14+bob),(52,7+bob),4)
+  pygame.draw.circle(s,(255,197,81) if kind=='mine' else (126,255,203),(52,6+bob),5)
+  for x in (54,69):
+    pygame.draw.ellipse(s,(242,248,239),(x,38+bob,9,18)); pygame.draw.ellipse(s,(27,42,56),(x+4,42+bob,4,10))
+  if kind=='rescue': pygame.draw.arc(s,(188,248,210),(49,56+bob,25,13),math.pi,math.tau,3)
+  img=pygame.transform.smoothscale(s,(size,size)); _MINE_ART[key]=img; return img
+
+def mine_icon(center,size,kind='mine',phase=0):
+  im=mine_robot(size,kind,phase); SCREEN.blit(im,im.get_rect(center=center))
+
+def mine_flag(rect):
+  x,y=rect.center; k=max(4,rect.w//5)
+  pygame.draw.line(SCREEN,(242,220,162),(x-k,y-k*2),(x-k,y+k*2),max(2,k//3))
+  pygame.draw.polygon(SCREEN,(240,115,91),[(x-k,y-k*2),(x+k*2,y-k),(x-k,y)])
+  pygame.draw.line(SCREEN,(242,220,162),(x-k*2,y+k*2),(x+k,y+k*2),max(2,k//3))
+
+def mine_board(g):
+  cell=min(56,432//g.n); w=cell*g.n
+  return pygame.Rect((WIDTH-w)//2,190+(432-w)//2,w,w),cell
+
+def mine_controls():
+  return {'menu':pygame.Rect(18,685,100,46),'restart':pygame.Rect(128,685,110,46),'save':pygame.Rect(248,685,90,46),'mode':pygame.Rect(348,685,334,46)}
+
+_MINE_FONTS={}
+def mine_number(n,cell):
+  if cell not in _MINE_FONTS: _MINE_FONTS[cell]=pygame.font.SysFont('arial',max(16,cell//2),bold=True)
+  return _MINE_FONTS[cell].render(str(n),True,((32,74,111),(36,112,81),(180,64,55),(114,66,150),(153,92,37),(30,118,126),(45,52,62),(99,88,70))[n-1])
+
+def mine_tile(rect,opened=False,number=0,flag=False,robot=False,mine=False,hit=False,hover=False,phase=0):
+  r=rect.inflate(-4,-4)
+  if opened:
+    pygame.draw.rect(SCREEN,(223,238,219) if robot else (234,224,196),r,border_radius=6)
+    if number:
+      t=mine_number(number,rect.w); SCREEN.blit(t,t.get_rect(center=r.center))
+    if robot: mine_icon((r.right-max(8,r.w//5),r.top+max(8,r.h//5)),max(13,r.w//3),'rescue',phase)
+  else:
+    pygame.draw.rect(SCREEN,(32,52,57),r.move(0,2),border_radius=6)
+    pygame.draw.rect(SCREEN,(83,128,126) if hover else (60,98,98),r,border_radius=6)
+    pygame.draw.line(SCREEN,(125,166,153),(r.x+5,r.y+3),(r.right-5,r.y+3),2)
+    if hit: pygame.draw.rect(SCREEN,(181,89,75),r,border_radius=6)
+    if mine: mine_icon(r.center,r.w,'mine',phase)
+    elif flag: mine_flag(r)
+
+def draw_mines(app):
+  g=app.game; draw_background('mines')
+  pygame.draw.rect(SCREEN,(25,44,48),(14,14,672,108),border_radius=18)
+  dino_text('BUSCAMINES',(150,40),TITLE_FONT,(249,216,140)); dino_text('RESCAT · '+MINE_LEVELS[g.level][0],(150,78),SMALL)
+  for x,label,value in ((350,'MINES',str(g.total-len(g.flags))),(480,'TEMPS',f'{int(g.seconds)} s'),(605,'ROBOTS',f'{len(g.rescued)}/3')):
+    dino_text(label,(x,40),SMALL,(178,209,197)); dino_text(value,(x,77),TITLE_FONT)
+  pygame.draw.rect(SCREEN,(28,49,50),(25,133,650,43),border_radius=12)
+  msg=g.notice if not g.started or g.notice_timer else ('Escut preparat' if g.shield else 'Localitza les mines i rescata els robots')
+  guide_fit(msg,(350,154),FONT,(245,222,157),620)
+  b,c=mine_board(g); pygame.draw.rect(SCREEN,(24,43,48),b.inflate(20,20),border_radius=12)
+  phase=pygame.time.get_ticks()//120%8; mp=mouse_pos()
+  for i in range(g.n*g.n):
+    y,x=divmod(i,g.n); r=pygame.Rect(b.x+x*c,b.y+y*c,c,c)
+    opened=i in g.opened
+    mine_tile(r,opened,g.counts[i] if opened else 0,i in g.flags,i in g.rescued,g.winner=='loss' and i in g.mines,g.hit==i,r.collidepoint(mp),phase)
+    if g.winner=='loss' and i in g.flags and i not in g.mines:
+      pygame.draw.line(SCREEN,(243,125,100),r.topleft,r.bottomright,3)
+  pygame.draw.rect(SCREEN,(26,45,48),(0,640,WIDTH,110))
+  guide_fit('Clic: obrir · Clic dret o F: banderes',(350,663),SMALL,(207,228,213),650)
+  for k,r in mine_controls().items():
+    dino_ui_button(r,{'menu':'Menú','restart':'Reinicia','save':'Desa','mode':'MODE: BANDERES' if g.flag_mode else 'MODE: OBRIR'}[k],k=='mode')
+
+def process_mines(app,events):
+  g=app.game
+  for e in events:
+    if e.type==pygame.KEYDOWN:
+      if e.key in (pygame.K_ESCAPE,pygame.K_m): app.leave(); return
+      if e.key==pygame.K_r: app.restart(); return
+      if e.key==pygame.K_f and not g.winner: g.flag_mode=not g.flag_mode
+    elif e.type==pygame.MOUSEBUTTONDOWN and e.button in (1,3):
+      if app.result:
+        _,a,m=result_buttons()
+        if e.button==1 and a.collidepoint(e.pos): app.restart(); return
+        if e.button==1 and m.collidepoint(e.pos): app.leave(); return
+        continue
+      if g.winner: continue
+      if e.button==1:
+        k=next((k for k,r in mine_controls().items() if r.collidepoint(e.pos)),None)
+        if k=='menu': app.leave(); return
+        if k=='restart': app.restart(); return
+        if k=='save': app.press('save'); return
+        if k=='mode': g.flag_mode=not g.flag_mode; continue
+      b,c=mine_board(g)
+      if b.collidepoint(e.pos):
+        i=(e.pos[1]-b.y)//c*g.n+(e.pos[0]-b.x)//c
+        if e.button==3 or g.flag_mode: g.flag(i)
+        else: g.reveal(i)
+
+GUIDES['mines']=[
+ ('Obre caselles','El primer clic i les caselles veïnes són segurs. Els espais buits obren automàticament la zona.','Clica la casella marcada.','open'),
+ ('Interpreta números','Cada número indica quantes mines hi ha a les vuit caselles del voltant.','El número 1 indica una mina veïna.','number'),
+ ('Marca mines','Clic dret o activa el mode Banderes per marcar una casella sospitosa. Torna a clicar per retirar la bandera.','Marca la casella sospitosa.','flag'),
+ ('Rescata robots','Hi ha tres robots amagats en caselles segures. Si els trobes tots, guanyes un escut que et salva d’una mina.','Rescata el tercer robot.','rescue'),
+ ('Guanya la partida','Obre totes les caselles segures. No cal marcar totes les mines. Guanya punts de botiga si completes el tauler.','Obre l’última casella segura.','win')]
+_mine_old_guide=guide_visual
+def guide_visual(kind,tag,reveal,area):
+  if kind!='mines': return _mine_old_guide(kind,tag,reveal,area)
+  cell=48; x=230; y=200
+  mines={0,4,20,24} if tag=='open' else {13}
+  target_i=13 if tag=='flag' else 12
+  target=(x+(target_i%5)*cell+24,y+(target_i//5)*cell+24)
+  opened=set(); flags=set(); robots=set(); shown=set()
+  if tag=='open' and reveal: opened=set(range(25))-mines
+  elif tag=='number':
+    opened={12}; shown={13} if reveal else set()
+  elif tag=='flag':
+    opened={7,8,9,12,14,17,18,19}; flags={13} if reveal else set()
+  elif tag=='rescue':
+    opened={6,7,8,11,16,17}; robots={6,17}
+    if reveal: opened.add(12); robots.add(12)
+  elif tag=='win':
+    opened=set(range(25))-mines-{12}; flags={13}
+    if reveal: opened.add(12)
+  for i in range(25):
+    rr,cc=divmod(i,5); r=pygame.Rect(x+cc*cell,y+rr*cell,cell,cell)
+    number=sum(max(abs(rr-m//5),abs(cc-m%5))==1 for m in mines)
+    mine_tile(r,i in opened,number,i in flags,i in robots,i in shown)
+  if not reveal: guide_target(target,19)
+  return target
+
+ACH += [('mines:first','Primer rescat','Completa una partida de Buscamines.',False,lambda:sum(SAVE['mine_profile']['wins'].values())>=1),('mines:hard','Ment precisa','Completa Buscamines difícil.',False,lambda:SAVE['mine_profile']['wins'].get('mine_hard',0)>=1)]
 
 async def main():
   clock = pygame.time.Clock()
