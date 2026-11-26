@@ -73,23 +73,38 @@ def is_locked(level):
 
 
 WIDTH, HEIGHT = 700, 750
+HOME_SIZE = (1080, 850)
 BOARD_SIZE = 550
 OFFSET_X = (WIDTH - BOARD_SIZE) // 2
 OFFSET_Y = 110
 
 if HAS_JS:
-  DISPLAY = pygame.display.set_mode((WIDTH, HEIGHT))
+  DISPLAY = pygame.display.set_mode(HOME_SIZE)
 else:
   info = pygame.display.Info()
-  initial_scale = max(0.5, min((info.current_w - 70) / WIDTH, (info.current_h - 100) / HEIGHT, 1.6))
-  DISPLAY = pygame.display.set_mode((int(WIDTH * initial_scale), int(HEIGHT * initial_scale)), pygame.RESIZABLE)
-SCREEN = pygame.Surface((WIDTH, HEIGHT))
+  initial_scale = max(0.5, min((info.current_w - 70) / HOME_SIZE[0], (info.current_h - 100) / HOME_SIZE[1], 1.6))
+  DISPLAY = pygame.display.set_mode(tuple(int(n * initial_scale) for n in HOME_SIZE), pygame.RESIZABLE)
+_GAME_SCREEN = pygame.Surface((WIDTH, HEIGHT))
+_HOME_SCREEN = None
+SCREEN = _GAME_SCREEN
 VIEW = (0, 0, WIDTH, HEIGHT)
+VIEW_SIZE = (WIDTH, HEIGHT)
+
+
+def select_screen(home=False):
+  global SCREEN, _HOME_SCREEN
+  if home:
+    if _HOME_SCREEN is None:
+      _HOME_SCREEN = pygame.Surface(HOME_SIZE)
+    SCREEN = _HOME_SCREEN
+  else:
+    SCREEN = _GAME_SCREEN
 
 
 def logical_pos(pos):
   x, y, w, h = VIEW
-  return (int((pos[0] - x) * WIDTH / w), int((pos[1] - y) * HEIGHT / h))
+  lw, lh = VIEW_SIZE
+  return (math.floor((pos[0] - x) * lw / w), math.floor((pos[1] - y) * lh / h))
 
 
 def mouse_pos():
@@ -97,16 +112,18 @@ def mouse_pos():
 
 
 def present():
-  global VIEW, DISPLAY
+  global VIEW, VIEW_SIZE, DISPLAY
   DISPLAY = pygame.display.get_surface()
   w, h = DISPLAY.get_size()
-  scale = min(w / WIDTH, h / HEIGHT)
-  sw, sh = max(1, int(WIDTH * scale)), max(1, int(HEIGHT * scale))
+  lw, lh = SCREEN.get_size()
+  scale = min(w / lw, h / lh)
+  sw, sh = max(1, int(lw * scale)), max(1, int(lh * scale))
   VIEW = ((w - sw) // 2, (h - sh) // 2, sw, sh)
+  VIEW_SIZE = (lw, lh)
   DISPLAY.fill(FRAME_COLOR)
-  if not HAS_JS and (sw != w or sh != h) and _FRAME_SURFACE is not None:
+  if (sw != w or sh != h) and _FRAME_SURFACE is not None and _FRAME_SURFACE.get_size() == VIEW_SIZE:
     paint_frame(DISPLAY, sw, sh, VIEW[:2])
-  DISPLAY.blit(pygame.transform.smoothscale(SCREEN, (sw, sh)), VIEW[:2])
+  DISPLAY.blit(SCREEN if (sw, sh) == VIEW_SIZE else pygame.transform.smoothscale(SCREEN, (sw, sh)), VIEW[:2])
   pygame.display.flip()
 
 
@@ -147,9 +164,9 @@ def configure_browser():
         }
         const vw = Math.max(1, Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth));
         const vh = Math.max(1, Math.min(window.innerHeight, window.visualViewport ? window.visualViewport.height : window.innerHeight));
-        const scale = Math.min(vw / 700, vh / 750);
-        const w = Math.max(1, Math.floor(700 * scale));
-        const h = Math.max(1, Math.floor(750 * scale));
+        const scale = Math.min(vw / 1080, vh / 850);
+        const w = Math.max(1, Math.floor(1080 * scale));
+        const h = Math.max(1, Math.floor(850 * scale));
         const props = { position:'fixed', left:Math.floor((vw-w)/2)+'px',
           top:Math.floor((vh-h)/2)+'px', width:w+'px', height:h+'px',
           right:'auto', bottom:'auto', margin:'0px', transform:'none',
@@ -4940,6 +4957,7 @@ class App:
   # ---------- dibuix ----------
   def draw(self):
     global ACTIVE_BACKGROUND
+    select_screen(self.state == "main")
     ACTIVE_BACKGROUND = self.kind if self.state == "play" else "menu"
     if self.state in ("saves", "achievements", "guide"):
       self.draw_extra()
@@ -15891,9 +15909,17 @@ HOME_TOOLS = {"shop":"Botiga", "settings":"Configuració", "saves":"Partides", "
 
 
 def home_rects():
-  rects={k:pygame.Rect(23+i*166,155,156,170) for i,k in enumerate(('morris','c4','chess','go'))}
-  rects.update({k:pygame.Rect(106+i*166,345,156,170) for i,k in enumerate(('shogi','dino','mines'))})
-  rects.update({k:pygame.Rect(72+i*138,540,120,78) for i,k in enumerate(('shop','settings','saves','achievements'))})
+  keys=('morris','c4','chess','go','shogi','dino','mines')
+  rects={}
+  cw,ch,gap=292,184,34
+  for row,start in enumerate(range(0,len(keys),3)):
+    group=keys[start:start+3]
+    left=(HOME_SIZE[0]-(len(group)*cw+(len(group)-1)*gap))//2
+    for col,k in enumerate(group):
+      rects[k]=pygame.Rect(left+col*(cw+gap),128+row*204,cw,ch)
+  tw,th,tgap=196,74,24
+  left=(HOME_SIZE[0]-(4*tw+3*tgap))//2
+  rects.update({k:pygame.Rect(left+i*(tw+tgap),748,tw,th) for i,k in enumerate(HOME_TOOLS)})
   return rects
 
 
@@ -15935,9 +15961,13 @@ def draw_dino_icon(area):
 def home_cover(key, area):
   if key=="mines":
     pygame.draw.rect(SCREEN,(38,68,70),area,border_radius=12)
+    cell=max(14,min(34,(area.h-12)//3))
+    cols=max(1,(area.w-12)//cell)
+    left=area.centerx-cols*cell//2
+    top=area.centery-3*cell//2
     for i in range(3):
-      for j in range(4): pygame.draw.rect(SCREEN,(58,94,91),(area.x+6+j*29,area.y+6+i*30,25,26),border_radius=4)
-    mine_icon(area.center,min(area.h-6,100),"mine",pygame.time.get_ticks()//120); return
+      for j in range(cols): pygame.draw.rect(SCREEN,(58,94,91),(left+j*cell+2,top+i*cell+2,cell-4,cell-4),border_radius=4)
+    mine_icon(area.center,min(area.h-8,120),"mine",pygame.time.get_ticks()//120); return
   pygame.draw.rect(SCREEN, (242,223,186), area, border_radius=12)
   if key == "shogi":
     draw_menu_icon(key, area.inflate(-6, -6))
@@ -16014,12 +16044,13 @@ def home_tool_icon(key, center, color, size=54):
 
 def draw_home_menu(app, opts, mouse):
   draw_background("menu")
-  pygame.draw.line(SCREEN, (134, 160, 149), (38, 125), (245, 125), 1)
-  pygame.draw.line(SCREEN, (134, 160, 149), (455, 125), (662, 125), 1)
+  cx=HOME_SIZE[0]//2
+  pygame.draw.line(SCREEN, (134, 160, 149), (68, 100), (cx-116, 100), 1)
+  pygame.draw.line(SCREEN, (134, 160, 149), (cx+116, 100), (HOME_SIZE[0]-68, 100), 1)
   ink=(60,46,34); muted=(104,87,68); gold=(183,126,41)
-  home_label('RATLLA', (350, 42), BIG_FONT, ink)
-  home_label('Jocs de taula i arcade', (350, 81), TITLE_FONT, muted)
-  coin = pygame.Rect(265, 102, 170, 34)
+  home_label('RATLLA', (cx, 29), BIG_FONT, ink)
+  home_label('Jocs de taula i arcade', (cx, 65), TITLE_FONT, muted)
+  coin = pygame.Rect(cx-95, 84, 190, 32)
   pygame.draw.rect(SCREEN, (253,239,204), coin, border_radius=17)
   pygame.draw.circle(SCREEN, gold, (coin.x + 18, coin.centery), 10)
   pygame.draw.circle(SCREEN, (253,223,123), (coin.x + 18, coin.centery), 6, 2)
@@ -16033,34 +16064,33 @@ def draw_home_menu(app, opts, mouse):
     pygame.draw.rect(SCREEN, (154, 171, 181), shadow, border_radius=18)
     pygame.draw.rect(SCREEN, (252, 238, 209) if hover else (246, 232, 204), r, border_radius=18)
     pygame.draw.rect(SCREEN, gold if hover else (157, 127, 88), r, 3 if hover else 2, border_radius=18)
-    area = pygame.Rect(r.x + 11, r.y + 11, r.w - 22, 104)
+    area = pygame.Rect(r.x + 12, r.y + 10, r.w - 24, 116)
     try:
       home_cover(key, area)
     except Exception as exc:
       print('Ratlla: portada',key,repr(exc))
       pygame.draw.rect(SCREEN,(225,213,186),area,border_radius=12)
       home_label(HOME_TITLES[key],area.center,SMALL,ink)
-    guide_fit(HOME_TITLES[key], (r.centerx, r.bottom - 40), FONT, ink,r.w-12)
-    guide_fit(HOME_DESCRIPTIONS[key], (r.centerx, r.bottom - 18), SMALL, muted,r.w-12)
+    guide_fit(HOME_TITLES[key], (r.centerx, r.bottom - 39), TITLE_FONT, ink,r.w-16)
+    guide_fit(HOME_DESCRIPTIONS[key], (r.centerx, r.bottom - 15), FONT, muted,r.w-16)
 
   for key, label in HOME_TOOLS.items():
     r = rects[key]; hover = r.collidepoint(mouse)
     pygame.draw.rect(SCREEN, (246,232,204) if hover else (241,226,195), r, border_radius=16)
     pygame.draw.rect(SCREEN, gold if hover else (157,127,88), r, 2, border_radius=16)
     col = gold if key in ('shop','achievements') else (89, 110, 117)
-    home_tool_icon(key, (r.centerx, r.y + 26), col, 34)
-    home_label(label, (r.centerx, r.y + 54), SMALL, ink)
+    home_tool_icon(key, (r.x + 30, r.centery), col, 36)
+    guide_fit(label, (r.centerx+20, r.centery-9 if key in ('saves','achievements') else r.centery), FONT, ink, r.w-64)
     if key == 'saves':
       n = sum(x is not None for x in SAVE['slots'])
-      home_label(f'{n}/10', (r.centerx, r.y + 70), SMALL, muted)
+      home_label(f'{n}/10', (r.centerx+20, r.centery+15), SMALL, muted)
     elif key == 'achievements':
       refresh_achievements()
-      home_label(f"{len(SAVE['achievements'])}/{len(ACH)}", (r.centerx, r.y + 70), SMALL, muted)
+      home_label(f"{len(SAVE['achievements'])}/{len(ACH)}", (r.centerx+20, r.centery+15), SMALL, muted)
     else:
-      home_label(' ', (r.centerx, r.y + 70), SMALL, muted)
+      home_label(' ', (r.centerx+20, r.centery+15), SMALL, muted)
 
-  home_label('Tria un joc per començar', (350, 655), FONT, muted)
-  home_label('Local · Contra bots · Un jugador', (350, 680), SMALL, muted)
+  home_label('Tria un joc per començar  ·  Local · Contra bots · Un jugador', (cx, 836), SMALL, muted)
 
 
 def draw_footer_save(rect, enabled):
@@ -16722,11 +16752,12 @@ def background_png(surf):
 
 def draw_background(target):
   global FRAME_COLOR,_BROWSER_FRAME,_FRAME_SURFACE
-  surf=background_surface(target)
+  size=SCREEN.get_size()
+  surf=background_surface(target,size=size)
   SCREEN.blit(surf,(0,0))
   _FRAME_SURFACE=surf
   FRAME_COLOR=background_palette(target)[1]
-  frame_key=(target,SAVE["backgrounds"].get(target,"auto"))
+  frame_key=(target,SAVE["backgrounds"].get(target,"auto"),size)
   if HAS_JS and frame_key != _BROWSER_FRAME:
     try:
       col='#%02x%02x%02x'%FRAME_COLOR
@@ -18095,6 +18126,7 @@ async def main():
       await asyncio.sleep(0)
   except Exception as exc:
     traceback.print_exc()
+    select_screen(False)
     # Mostra la causa sense esborrar les dades desades ni quedar en negre.
     detail=type(exc).__name__+': '+str(exc)
     print('RATLLA ERROR:',detail)
