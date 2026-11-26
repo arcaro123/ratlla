@@ -156,56 +156,266 @@ RES_FONT = pygame.font.SysFont("arial", 36, bold=True)
 BIG_FONT = pygame.font.SysFont("arial", 44, bold=True)
 
 # ---------------------------------------------------------------
-# BOTIGA: ESTILS DE TAULER I DE FITXES
+# BOTIGA: DADES (taulers, fitxes, marques, celebracions, extres i packs)
 # ---------------------------------------------------------------
+# "req" = requisit de progrés: ("wins", n) victòries contra el bot en total,
+# o ("level", nivell) haver guanyat com a mínim una vegada a aquest nivell.
 
 # Taulers: color de fons, de línies i del tauler del 4 en ratlla.
 BOARD_THEMES = {
     "classic": dict(name="Clàssic", price=0, bg=(240, 217, 181),
-                    line=(75, 54, 33), c4=(30, 80, 170), c4dark=(18, 50, 120)),
+                    line=(75, 54, 33), c4=(30, 80, 170), c4dark=(18, 50, 120),
+                    desc="El tauler de sempre: beix càlid i fusta fosca."),
     "forest": dict(name="Bosc", price=250, bg=(206, 226, 188),
-                   line=(44, 74, 40), c4=(34, 120, 80), c4dark=(20, 80, 52)),
+                   line=(44, 74, 40), c4=(34, 120, 80), c4dark=(20, 80, 52),
+                   desc="Verds tranquils per pensar millor cada jugada."),
     "ocean": dict(name="Oceà", price=400, bg=(190, 224, 238),
-                  line=(22, 62, 102), c4=(0, 125, 160), c4dark=(0, 84, 110)),
+                  line=(22, 62, 102), c4=(0, 125, 160), c4dark=(0, 84, 110),
+                  desc="Blaus profunds i calmats, com una tarda a la platja."),
     "cherry": dict(name="Cirera", price=600, bg=(246, 208, 214),
-                   line=(110, 30, 50), c4=(170, 40, 80), c4dark=(110, 20, 52)),
+                   line=(110, 30, 50), c4=(170, 40, 80), c4dark=(110, 20, 52),
+                   req=("wins", 3),
+                   desc="Rosa cirera. Reservat a jugadors amb una mica d'experiència."),
     "lavender": dict(name="Lavanda", price=800, bg=(222, 212, 242),
-                     line=(62, 42, 110), c4=(100, 70, 170), c4dark=(62, 42, 120)),
+                     line=(62, 42, 110), c4=(100, 70, 170), c4dark=(62, 42, 120),
+                     req=("wins", 8),
+                     desc="Tons violeta suaus per a qui ja domina el tauler."),
+    "sand": dict(name="Desert", price=1200, bg=(236, 200, 140),
+                 line=(120, 70, 20), c4=(200, 120, 30), c4dark=(140, 80, 15),
+                 req=("level", "hard"),
+                 desc="Or i sorra. Només per a qui ha derrotat el nivell Difícil."),
 }
 
-# Fitxes: w/b = Tres en ratlla (blanques/negres), c1/c2 = 4 en ratlla.
-# Cada color és (farciment, vora). deco: 0 llisa, 1 anell, 2 gemma.
+# Fitxes: w/b = escacs i Tres en ratlla (blanques/negres), b/w al Go,
+# c1/c2 = 4 en ratlla. Cada color és (farciment, vora). deco: 0 llisa, 1 anell, 2 gemma.
 PIECE_STYLES = {
     "classic": dict(name="Clàssiques", price=0, deco=0,
                     w=((240, 240, 240), (100, 100, 100)),
                     b=((40, 40, 40), (0, 0, 0)),
                     c1=((215, 50, 50), (140, 20, 20)),
-                    c2=((245, 200, 40), (170, 130, 10))),
+                    c2=((245, 200, 40), (170, 130, 10)),
+                    desc="Blanques i negres de tota la vida."),
     "wood": dict(name="Fusta", price=200, deco=1,
                  w=((236, 206, 150), (150, 110, 60)),
                  b=((112, 70, 36), (60, 36, 16)),
                  c1=((196, 120, 60), (110, 60, 25)),
-                 c2=((240, 214, 160), (150, 110, 60))),
+                 c2=((240, 214, 160), (150, 110, 60)),
+                 desc="Peces de fusta tornejada amb un anell gravat."),
     "gem": dict(name="Gemmes", price=400, deco=2,
                 w=((90, 200, 235), (30, 110, 150)),
                 b=((225, 60, 110), (130, 20, 60)),
                 c1=((225, 60, 110), (130, 20, 60)),
-                c2=((90, 200, 235), (30, 110, 150))),
+                c2=((90, 200, 235), (30, 110, 150)),
+                desc="Turquesa i robí amb una brillantor al centre."),
     "gold": dict(name="Or i plata", price=700, deco=1,
                  w=((245, 205, 80), (160, 120, 10)),
                  b=((185, 190, 200), (90, 95, 105)),
                  c1=((245, 205, 80), (160, 120, 10)),
-                 c2=((185, 190, 200), (90, 95, 105))),
+                 c2=((185, 190, 200), (90, 95, 105)),
+                 req=("wins", 5),
+                 desc="Un exèrcit d'or contra un de plata."),
     "neon": dict(name="Neó", price=1000, deco=2,
                  w=((90, 255, 170), (0, 140, 80)),
                  b=((200, 90, 255), (100, 20, 150)),
                  c1=((200, 90, 255), (100, 20, 150)),
-                 c2=((90, 255, 170), (0, 140, 80))),
+                 c2=((90, 255, 170), (0, 140, 80)),
+                 req=("wins", 12),
+                 desc="Verd i violeta elèctrics. Per a veterans."),
+    "marble": dict(name="Marbre", price=1500, deco=1,
+                   w=((245, 245, 250), (150, 150, 165)),
+                   b=((62, 64, 76), (25, 26, 32)),
+                   c1=((90, 110, 210), (40, 55, 130)),
+                   c2=((240, 240, 246), (150, 150, 165)),
+                   req=("level", "impossible"),
+                   desc="Marbre blanc i pissarra. El premi als qui han vençut l'Impossible."),
 }
+
+# Marques de l'última jugada (color del ressaltat).
+MARK_STYLES = {
+    "orange": dict(name="Taronja", price=0, color=(255, 160, 0),
+                   desc="El ressaltat clàssic de l'última jugada."),
+    "cyan": dict(name="Cian", price=100, color=(0, 200, 230),
+                 desc="Un blau elèctric que es veu de lluny."),
+    "magenta": dict(name="Magenta", price=150, color=(230, 60, 170),
+                    desc="Rosa intens per no perdre mai de vista la jugada."),
+    "lime": dict(name="Llimona", price=200, color=(130, 220, 30),
+                 desc="Verd llima fluorescent."),
+}
+
+# Celebracions quan guanyes una partida.
+FX_STYLES = {
+    "none": dict(name="Cap", price=0, desc="Sense efectes. Victòries discretes."),
+    "confetti": dict(name="Confeti", price=150,
+                     desc="Pluja de confeti de colors quan guanyes."),
+    "stars": dict(name="Estels", price=300, req=("wins", 5),
+                  desc="Estels daurats que centellegen sobre la pantalla."),
+    "bubbles": dict(name="Bombolles", price=400,
+                    desc="Bombolles que pugen suaument mentre celebres."),
+}
+
+# Extres consumibles (es poden comprar moltes vegades).
+EXTRA_ITEMS = {
+    "hints": dict(name="Pack de pistes", price=120, amount=3, field="hints",
+                  big="x3", small="pistes",
+                  desc="3 pistes que no costen punts. Compten igual: amb pista la victòria només dona 1 punt."),
+    "undos": dict(name="Pack de desfer", price=40, amount=5, field="undos",
+                  big="x5", small="desfer",
+                  desc="5 usos de desfer gratuïts. Si els gastes, no et cobrem punts per tornar enrere."),
+    "double": dict(name="Multiplicador x2", price=250, amount=3, field="double",
+                   big="x2", small="3 victòries",
+                   desc="Les teves 3 properes victòries contra el bot donen el doble de punts."),
+}
+
+# Packs: conjunts amb descompte. Si ja tens alguna peça, només pagues la resta.
+PACKS = {
+    "natura": dict(name="Pack Natura", disc=0.25,
+                   items=(("boards", "forest"), ("pieces", "wood"),
+                          ("marks", "lime"), ("fx", "bubbles")),
+                   desc="Bosc, fusta, llimona i bombolles. Tot l'estil verd."),
+    "arcade": dict(name="Pack Arcade", disc=0.30,
+                   items=(("boards", "cherry"), ("pieces", "neon"),
+                          ("marks", "cyan"), ("fx", "confetti")),
+                   desc="Cirera, neó, cian i confeti. Per a veterans."),
+    "reial": dict(name="Pack Reial", disc=0.25,
+                  items=(("boards", "lavender"), ("pieces", "gold"),
+                         ("marks", "magenta"), ("fx", "stars")),
+                  desc="Lavanda, or i plata, magenta i estels. Tot un llinatge."),
+}
+
+SHOP_TABS = (("boards", "Taulers"), ("pieces", "Fitxes"), ("marks", "Marques"),
+             ("fx", "Victòria"), ("extras", "Extres"), ("packs", "Packs"))
+TAB_NAMES = {"boards": "tauler", "pieces": "fitxes", "marks": "marca", "fx": "efecte"}
+COSMETIC_TABS = ("boards", "pieces", "marks", "fx")
+DEAL_DISCOUNT = 0.30
+STOCK_MAX = 99
+
+RARITIES = ((900, "Llegendari", (210, 140, 0)), (500, "Èpic", (150, 60, 200)),
+            (150, "Rar", (30, 120, 220)), (0, "Comú", (120, 110, 100)))
 
 
 def _lighter(c):
   return tuple(min(255, v + 70) for v in c)
+
+
+def shop_table(tab):
+  return {"boards": BOARD_THEMES, "pieces": PIECE_STYLES, "marks": MARK_STYLES,
+          "fx": FX_STYLES, "extras": EXTRA_ITEMS, "packs": PACKS}[tab]
+
+
+def rarity(price):
+  for th, name, col in RARITIES:
+    if price >= th:
+      return name, col
+  return RARITIES[-1][1], RARITIES[-1][2]
+
+
+def total_wins():
+  """Victòries contra el bot, sumant tots els jocs i nivells."""
+  return sum(SAVE["records"][g][k][0] for g in GAMES for k in LEVELS)
+
+
+def beat_level(level):
+  """Has guanyat com a mínim una vegada a aquest nivell (o a un de superior)?"""
+  return any(SAVE["records"][g][k][0] > 0
+             for g in GAMES for k in LEVELS[LEVELS.index(level):])
+
+
+def req_check(req):
+  """(compleix, text) d'un requisit de progrés."""
+  if not req:
+    return True, ""
+  if req[0] == "wins":
+    w = total_wins()
+    return w >= req[1], f"Cal guanyar {req[1]} partides al bot ({min(w, req[1])}/{req[1]})"
+  return beat_level(req[1]), f"Cal guanyar al nivell {LEVEL_INFO[req[1]][0].capitalize()}"
+
+
+def deal_key():
+  """L'oferta del dia: un element de la botiga amb un 30% de descompte."""
+  pool = [(t, k) for t in COSMETIC_TABS for k, it in shop_table(t).items()
+          if it["price"] > 0]
+  return random.Random(time.strftime("%Y-%m-%d")).choice(pool)
+
+
+def is_owned(tab, key):
+  if tab == "extras":
+    return False
+  if tab == "packs":
+    return not pack_unowned(PACKS[key])
+  return key in SAVE["owned"][tab]
+
+
+def pack_unowned(pack):
+  return [(t, k) for t, k in pack["items"] if k not in SAVE["owned"][t]]
+
+
+def pack_price(pack):
+  total = sum(shop_table(t)[k]["price"] for t, k in pack_unowned(pack))
+  return int(round(total * (1 - pack["disc"]) / 5.0)) * 5
+
+
+def pack_req(pack):
+  for t, k in pack_unowned(pack):
+    ok, why = req_check(shop_table(t)[k].get("req"))
+    if not ok:
+      return False, f"{shop_table(t)[k]['name']}: {why}"
+  return True, ""
+
+
+def price_of(tab, key):
+  """(preu, preu original o None si no hi ha descompte)."""
+  item = shop_table(tab)[key]
+  if tab == "packs":
+    return pack_price(item), None
+  base = item["price"]
+  if base > 0 and (tab, key) == deal_key() and key not in SAVE["owned"].get(tab, []):
+    return max(5, int(round(base * (1 - DEAL_DISCOUNT) / 5.0)) * 5), base
+  return base, None
+
+
+def base_price(tab, key):
+  item = shop_table(tab)[key]
+  return pack_price(item) if tab == "packs" else item["price"]
+
+
+def shop_primary(tab, key):
+  """(text del botó principal, activat) per a la finestra de detall."""
+  item = shop_table(tab)[key]
+  price, _orig = price_of(tab, key)
+  pts = SAVE["points"]
+  if tab == "extras":
+    if SAVE["items"][item["field"]] + item["amount"] > STOCK_MAX:
+      return "Ja en tens molts", False
+    return f"Comprar ({price})", pts >= price
+  if tab == "packs":
+    if not pack_unowned(item):
+      return "Ja tens el pack", False
+    if not pack_req(item)[0]:
+      return "Bloquejat", False
+    return f"Comprar pack ({price})", pts >= price
+  if key in SAVE["owned"][tab]:
+    if SAVE["equipped"][tab] == key:
+      return "Equipat", False
+    return "Equipar", True
+  if not req_check(item.get("req"))[0]:
+    return "Bloquejat", False
+  return f"Comprar ({price})", pts >= price
+
+
+def wrap_text(text, font, maxw):
+  lines, cur = [], ""
+  for w in text.split():
+    t = (cur + " " + w).strip()
+    if font.render(t, True, (0, 0, 0)).get_width() <= maxw:
+      cur = t
+    else:
+      lines.append(cur)
+      cur = w
+  if cur:
+    lines.append(cur)
+  return lines
+
+
 
 
 # ---------------------------------------------------------------
@@ -223,8 +433,11 @@ def default_save():
       "difficulty": "hard",
       "rules": {"pieces": 7, "fly": True, "diag": False},
       "unlocked": False,
-      "owned": {"boards": ["classic"], "pieces": ["classic"]},
-      "equipped": {"boards": "classic", "pieces": "classic"},
+      "owned": {"boards": ["classic"], "pieces": ["classic"],
+                "marks": ["orange"], "fx": ["none"]},
+      "equipped": {"boards": "classic", "pieces": "classic",
+                   "marks": "orange", "fx": "none"},
+      "items": {"hints": 0, "undos": 0, "double": 0},
       "records": {
           g: {k: [0, 0, 0] for k in LEVELS + ("local",)} for g in GAMES
       },
@@ -253,19 +466,28 @@ def load_save():
           rec = loaded.get("records", {}).get(g, {}).get(k)
           if isinstance(rec, list) and len(rec) == 3:
             data["records"][g][k] = [int(x) for x in rec]
-      tables = (("boards", BOARD_THEMES), ("pieces", PIECE_STYLES))
+      tables = (("boards", BOARD_THEMES), ("pieces", PIECE_STYLES),
+                ("marks", MARK_STYLES), ("fx", FX_STYLES))
       owned = loaded.get("owned")
       if isinstance(owned, dict):
         for k, table in tables:
           lst = owned.get(k)
           if isinstance(lst, list):
-            data["owned"][k] = ["classic"] + [
-                x for x in dict.fromkeys(lst) if x in table and x != "classic"]
+            first = next(iter(table))
+            data["owned"][k] = [first] + [
+                x for x in dict.fromkeys(lst) if x in table and x != first]
       eq = loaded.get("equipped")
       if isinstance(eq, dict):
         for k, table in tables:
           if eq.get(k) in table and eq[k] in data["owned"][k]:
             data["equipped"][k] = eq[k]
+      its = loaded.get("items")
+      if isinstance(its, dict):
+        for k in data["items"]:
+          try:
+            data["items"][k] = max(0, min(STOCK_MAX, int(its.get(k, 0))))
+          except Exception:
+            pass
       data["unlocked"] = bool(loaded.get("unlocked", False))
   except Exception:
     pass
@@ -2453,8 +2675,12 @@ def draw_footer(app):
   rects, labels = game_buttons(app)
   online = app.mode == "online"
   names = {"restart": "Reiniciar", "menu": "Menú",
-           "undo": "Desfer" if online else f"Desfer (-{undo_cost(app)})",
-           "hint": "Pista" if online else f"Pista (-{hint_cost(app)})",
+           "undo": ("Desfer" if online else
+                    f"Desfer (x{SAVE['items']['undos']})" if SAVE["items"]["undos"] > 0
+                    else f"Desfer (-{undo_cost(app)})"),
+           "hint": ("Pista" if online else
+                    f"Pista (x{SAVE['items']['hints']})" if SAVE["items"]["hints"] > 0
+                    else f"Pista (-{hint_cost(app)})"),
            "pass": "Passar"}
   for (rect, key, en) in rects:
     draw_button(rect, names[key], en, small=len(rects) > 4)
@@ -2621,8 +2847,9 @@ _C4_SURF = []
 
 def apply_theme():
   """Aplica el tauler escollit a la botiga (colors de fons, línies i 4 en ratlla)."""
-  global BG_COLOR, LINE_COLOR, BOARD_BLUE, BOARD_DARK
+  global BG_COLOR, LINE_COLOR, BOARD_BLUE, BOARD_DARK, LAST_COLOR
   t = BOARD_THEMES[SAVE["equipped"]["boards"]]
+  LAST_COLOR = MARK_STYLES[SAVE["equipped"]["marks"]]["color"]
   BG_COLOR, LINE_COLOR = t["bg"], t["line"]
   BOARD_BLUE, BOARD_DARK = t["c4"], t["c4dark"]
   _C4_SURF.clear()                 # el tauler del 4 en ratlla es torna a dibuixar
@@ -2952,6 +3179,8 @@ def draw_result(app):
   veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
   veil.fill((0, 0, 0, 120))
   SCREEN.blit(veil, (0, 0))
+  if getattr(app, "fx", None):
+    fx_draw(app.fx)
 
   panel, again, menu = result_buttons()
   pygame.draw.rect(SCREEN, (250, 232, 195), panel, border_radius=18)
@@ -2960,7 +3189,7 @@ def draw_result(app):
   t = RES_FONT.render(res["title"], True, res["color"])
   SCREEN.blit(t, (panel.centerx - t.get_width() // 2, panel.y + 28))
 
-  for i, line in enumerate(res["lines"][:5]):
+  for i, line in enumerate(res["lines"][:6]):
     s = FONT.render(line, True, TEXT_COLOR)
     SCREEN.blit(s, (panel.centerx - s.get_width() // 2, panel.y + 90 + i * 28))
 
@@ -2984,15 +3213,167 @@ def draw_result(app):
 # BOTIGA (pantalla)
 # ---------------------------------------------------------------
 
-SHOP_TABS = (("boards", "Taulers"), ("pieces", "Fitxes"))
+CONFETTI_COLORS = ((235, 70, 70), (70, 170, 240), (250, 200, 50),
+                   (90, 200, 110), (200, 100, 230))
 
 
-def shop_table(tab):
-  return BOARD_THEMES if tab == "boards" else PIECE_STYLES
+def fx_new(style, n=70, area=None):
+  """Partícules per a la celebració. area = rectangle (per a la vista prèvia)."""
+  x0, y0, w, h = ((0, 0, WIDTH, HEIGHT) if area is None
+                  else (area.x, area.y, area.width, area.height))
+  ps = []
+  for _ in range(n):
+    p = dict(x=x0 + random.random() * w, y=y0 + random.random() * h,
+             ph=random.random() * 6.28, s=random.randint(6, 11),
+             c=random.choice(CONFETTI_COLORS),
+             vx=random.uniform(-40, 40), vy=random.uniform(110, 250))
+    if style == "stars":
+      p.update(s=random.randint(6, 15), vx=0, vy=random.uniform(-30, -6),
+               c=(255, random.randint(200, 235), random.randint(60, 140)))
+    elif style == "bubbles":
+      p.update(s=random.randint(5, 16), vx=random.uniform(-15, 15),
+               vy=-random.uniform(60, 140), c=(185, 228, 255))
+    if area is None:                       # a pantalla completa, entren de fora
+      if style == "confetti":
+        p["y"] = y0 - random.random() * 500
+      elif style == "bubbles":
+        p["y"] = y0 + h + random.random() * 300
+    ps.append(p)
+  return dict(style=style, ps=ps, last=time.time(), box=(x0, y0, w, h))
+
+
+def fx_draw(fx, animate=True):
+  now = time.time()
+  dt = min(0.1, now - fx["last"]) if animate else 0
+  fx["last"] = now
+  x0, y0, w, h = fx["box"]
+  style = fx["style"]
+  for p in fx["ps"]:
+    p["x"] += p["vx"] * dt
+    p["y"] += p["vy"] * dt
+    if animate:
+      if style == "confetti" and p["y"] > y0 + h + 20:
+        p["y"] = y0 - 20
+      elif style != "confetti" and p["y"] < y0 - 20:
+        p["y"] = y0 + h + 20
+    x, y = int(p["x"]), int(p["y"])
+    if style == "confetti":
+      pygame.draw.rect(SCREEN, p["c"], (x, y, p["s"], max(3, p["s"] * 2 // 3)))
+    elif style == "stars":
+      k = 0.6 + 0.4 * abs(math.sin(now * 3 + p["ph"]))
+      r = p["s"] * k
+      ri = r * 0.35
+      pygame.draw.polygon(SCREEN, p["c"], [
+          (x, y - r), (x + ri, y - ri), (x + r, y), (x + ri, y + ri),
+          (x, y + r), (x - ri, y + ri), (x - r, y), (x - ri, y - ri)])
+    else:
+      pygame.draw.circle(SCREEN, p["c"], (x, y), p["s"], 2)
+
+
+_FX_PREVIEW = {}
+
+
+def fx_preview(style, area):
+  """Vista prèvia estàtica d'una celebració dins d'un rectangle."""
+  key = (style, area.x, area.y, area.width, area.height)
+  if key not in _FX_PREVIEW:
+    _FX_PREVIEW[key] = fx_new(style, 28, area)
+  prev = SCREEN.get_clip()
+  SCREEN.set_clip(area)
+  fx_draw(_FX_PREVIEW[key], animate=False)
+  SCREEN.set_clip(prev)
+
+
+def draw_shop_scene(area, board_key, style_key, mark_key):
+  """Mini tauler d'escacs amb el tauler, les fitxes i la marca indicats."""
+  bt = BOARD_THEMES[board_key]
+  st = PIECE_STYLES[style_key]
+  mk = MARK_STYLES[mark_key]["color"]
+  cols, rows = 8, 4
+  s = min(area.width // cols, area.height // rows)
+  ox = area.x + (area.width - s * cols) // 2
+  oy = area.y + (area.height - s * rows) // 2
+  light = _mix(bt["bg"], (255, 255, 255), 0.45)
+  dark = _mix(bt["bg"], bt["line"], 0.5)
+  for r in range(rows):
+    for c in range(cols):
+      pygame.draw.rect(SCREEN, light if (r + c) % 2 == 0 else dark,
+                       (ox + c * s, oy + r * s, s, s))
+  pygame.draw.rect(SCREEN, bt["line"], (ox, oy, s * cols, s * rows), 2)
+  for c, r in ((2, 2), (2, 1)):                 # marca de l'última jugada
+    pygame.draw.rect(SCREEN, mk, (ox + c * s + 1, oy + r * s + 1, s - 2, s - 2),
+                     max(2, s // 9))
+  pieces = ((2, 1, "w", "P"), (4, 1, "b", "C"), (5, 3, "w", "T"),
+            (6, 0, "b", "R"), (0, 2, "w", "A"))
+  for c, r, side, letter in pieces:
+    fill, border = st[side]
+    cx, cy = ox + c * s + s // 2, oy + r * s + s // 2
+    draw_disc((cx, cy), fill, border, st["deco"], max(5, int(s * 0.4)))
+    if s >= 30:
+      lum = 0.299 * fill[0] + 0.587 * fill[1] + 0.114 * fill[2]
+      t = SMALL.render(letter, True, (40, 40, 40) if lum > 150 else (245, 245, 245))
+      SCREEN.blit(t, (cx - t.get_width() // 2, cy - t.get_height() // 2))
+
+
+def draw_c4_mini(area, board_key, style_key):
+  bt = BOARD_THEMES[board_key]
+  st = PIECE_STYLES[style_key]
+  cols, rows = 7, 5
+  cell = min(area.width // cols, area.height // rows)
+  w, h = cell * cols, cell * rows
+  x0, y0 = area.x + (area.width - w) // 2, area.y + (area.height - h) // 2
+  pygame.draw.rect(SCREEN, bt["c4"], (x0, y0, w, h), border_radius=8)
+  discs = {(3, 4): 1, (3, 3): 2, (2, 4): 2, (4, 4): 1, (2, 3): 1}
+  for r in range(rows):
+    for c in range(cols):
+      pos = (x0 + c * cell + cell // 2, y0 + r * cell + cell // 2)
+      v = discs.get((c, r))
+      if v:
+        fill, border = st["c%d" % v]
+        pygame.draw.circle(SCREEN, fill, pos, cell // 2 - 3)
+        pygame.draw.circle(SCREEN, border, pos, cell // 2 - 3, 2)
+      else:
+        pygame.draw.circle(SCREEN, bt["c4dark"], pos, cell // 2 - 3)
+
+
+def pack_keys(pack):
+  """(tauler, fitxes, marca) que mostra un pack (el que no inclou, l'actual)."""
+  d = dict(pack["items"])
+  eq = SAVE["equipped"]
+  return (d.get("boards", eq["boards"]), d.get("pieces", eq["pieces"]),
+          d.get("marks", eq["marks"]))
+
+
+def draw_item_visual(tab, key, area, big=False):
+  """Vista prèvia d'un element de la botiga dins de 'area'."""
+  item = shop_table(tab)[key]
+  eq = SAVE["equipped"]
+  if tab == "boards":
+    draw_shop_scene(area, key, eq["pieces"], eq["marks"])
+  elif tab == "pieces":
+    draw_shop_scene(area, eq["boards"], key, eq["marks"])
+  elif tab == "marks":
+    draw_shop_scene(area, eq["boards"], eq["pieces"], key)
+  elif tab == "packs":
+    draw_shop_scene(area, *pack_keys(item))
+  elif tab == "fx":
+    pygame.draw.rect(SCREEN, (40, 36, 52), area, border_radius=8)
+    if key == "none":
+      t = FONT.render("Sense efectes", True, (200, 190, 210))
+      SCREEN.blit(t, (area.centerx - t.get_width() // 2,
+                      area.centery - t.get_height() // 2))
+    else:
+      fx_preview(key, area)
+  else:                                         # extres
+    pygame.draw.rect(SCREEN, (250, 240, 215), area, border_radius=8)
+    t = (BIG_FONT if big else TITLE_FONT).render(item["big"], True, TEXT_COLOR)
+    SCREEN.blit(t, (area.centerx - t.get_width() // 2, area.centery - t.get_height()))
+    s = FONT.render(item["small"], True, SOFT_TEXT)
+    SCREEN.blit(s, (area.centerx - s.get_width() // 2, area.centery + 4))
 
 
 def shop_tab_rects():
-  return [(pygame.Rect(WIDTH // 2 - 215 + i * 230, 100, 200, 44), key, label)
+  return [(pygame.Rect(23 + i * 110, 100, 104, 40), key, label)
           for i, (key, label) in enumerate(SHOP_TABS)]
 
 
@@ -3000,30 +3381,141 @@ def shop_cards(tab):
   cards = []
   for i, key in enumerate(shop_table(tab)):
     col, row = i % 3, i // 3
-    cards.append((pygame.Rect(35 + col * 215, 170 + row * 205, 200, 190), key))
+    cards.append((pygame.Rect(35 + col * 215, 160 + row * 205, 200, 190), key))
   return cards
 
 
-def draw_item_preview(tab, key, area):
-  if tab == "boards":
-    t = BOARD_THEMES[key]
-    pygame.draw.rect(SCREEN, t["bg"], area, border_radius=8)
-    cx, cy = area.x + 52, area.centery
-    for half in (34, 23, 12):
-      pygame.draw.rect(
-          SCREEN, t["line"], (cx - half, cy - half, half * 2, half * 2), 3)
-    bx, by = area.x + 104, area.centery - 26
-    pygame.draw.rect(SCREEN, t["c4"], (bx, by, 54, 52), border_radius=6)
-    for i in range(3):
-      for j in range(2):
-        pygame.draw.circle(
-            SCREEN, t["c4dark"], (bx + 11 + i * 16, by + 14 + j * 24), 6)
+def shop_modal_rects():
+  panel = pygame.Rect(60, 110, 580, 490)
+  primary = pygame.Rect(panel.x + 30, panel.bottom - 70, 270, 52)
+  close = pygame.Rect(panel.right - 230, panel.bottom - 70, 200, 52)
+  return panel, primary, close
+
+
+def draw_shop_card(rect, tab, key, hover):
+  item = shop_table(tab)[key]
+  price, orig = price_of(tab, key)
+  rar_name, rar_col = rarity(base_price(tab, key))
+  owned = is_owned(tab, key)
+  equipped = tab in COSMETIC_TABS and SAVE["equipped"][tab] == key
+  if tab == "packs":
+    locked = not owned and not pack_req(item)[0]
   else:
-    st = PIECE_STYLES[key]
-    pygame.draw.rect(SCREEN, (240, 217, 181), area, border_radius=8)
-    for i, k in enumerate(("w", "b", "c1", "c2")):
-      fill, border = st[k]
-      draw_disc((area.x + 24 + i * 40, area.centery), fill, border, st["deco"], 15)
+    locked = tab != "extras" and not owned and not req_check(item.get("req"))[0]
+
+  pygame.draw.rect(SCREEN, (255, 240, 205) if hover else (250, 232, 195),
+                   rect, border_radius=14)
+  pygame.draw.rect(SCREEN, HIGHLIGHT_COLOR if equipped else LINE_COLOR, rect,
+                   5 if equipped else 3, border_radius=14)
+  pygame.draw.rect(SCREEN, rar_col, (rect.x + 16, rect.y + 8, rect.width - 32, 5),
+                   border_radius=3)
+  area = pygame.Rect(rect.x + 15, rect.y + 20, 170, 86)
+  draw_item_visual(tab, key, area)
+  if locked:
+    draw_padlock(area.centerx, area.centery)
+  if (tab, key) == deal_key() and orig:
+    tag = pygame.Rect(area.x + 4, area.y + 4, 46, 20)
+    pygame.draw.rect(SCREEN, COLOR_LOSE, tag, border_radius=6)
+    s = SMALL.render("-30%", True, (255, 255, 255))
+    SCREEN.blit(s, (tag.centerx - s.get_width() // 2, tag.centery - s.get_height() // 2))
+
+  name = FONT.render(item["name"], True, TEXT_COLOR)
+  SCREEN.blit(name, (rect.centerx - name.get_width() // 2, rect.y + 112))
+  if equipped:
+    txt, col = "EQUIPAT", COLOR_WIN
+  elif owned:
+    txt, col = ("Ja el tens", COLOR_WIN) if tab == "packs" else ("Clica per equipar", (0, 100, 200))
+  elif locked:
+    txt, col = "Bloquejat", COLOR_LOSE
+  elif orig:
+    txt, col = f"{price} (abans {orig})", COLOR_LOSE
+  else:
+    txt, col = f"{price} punts", (TEXT_COLOR if SAVE["points"] >= price else COLOR_LOSE)
+  s = SMALL.render(txt, True, col)
+  SCREEN.blit(s, (rect.centerx - s.get_width() // 2, rect.y + 146))
+  r = SMALL.render(rar_name, True, rar_col)
+  SCREEN.blit(r, (rect.centerx - r.get_width() // 2, rect.y + 167))
+
+
+def draw_shop_detail(app):
+  tab, key = app.shop_sel
+  item = shop_table(tab)[key]
+  panel, primary, close = shop_modal_rects()
+  price, orig = price_of(tab, key)
+  rar_name, rar_col = rarity(base_price(tab, key))
+  mouse = pygame.mouse.get_pos()
+
+  veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+  veil.fill((0, 0, 0, 150))
+  SCREEN.blit(veil, (0, 0))
+  pygame.draw.rect(SCREEN, (250, 232, 195), panel, border_radius=18)
+  pygame.draw.rect(SCREEN, rar_col, panel, 6, border_radius=18)
+
+  t = TITLE_FONT.render(item["name"], True, TEXT_COLOR)
+  SCREEN.blit(t, (panel.x + 30, panel.y + 18))
+  r = FONT.render(rar_name, True, rar_col)
+  SCREEN.blit(r, (panel.right - 30 - r.get_width(), panel.y + 22))
+
+  area = pygame.Rect(panel.x + 30, panel.y + 66, 520, 160)
+  eq = SAVE["equipped"]
+  if tab in ("boards", "pieces", "marks", "packs"):
+    scene = pygame.Rect(area.x, area.y, 320, 160)
+    if tab == "packs":
+      bk, pk, _mk = pack_keys(item)
+    else:
+      bk = key if tab == "boards" else eq["boards"]
+      pk = key if tab == "pieces" else eq["pieces"]
+    draw_item_visual(tab, key, scene, big=True)
+    draw_c4_mini(pygame.Rect(area.x + 340, area.y, 180, 160), bk, pk)
+  else:
+    draw_item_visual(tab, key, area, big=True)
+
+  y = panel.y + 240
+  for line in wrap_text(item["desc"], SMALL, 520)[:3]:
+    SCREEN.blit(SMALL.render(line, True, TEXT_COLOR), (panel.x + 30, y))
+    y += 21
+
+  y = panel.y + 312
+  pts = SAVE["points"]
+  owned = is_owned(tab, key)
+  if tab == "packs":
+    names = ", ".join(shop_table(t2)[k2]["name"] for t2, k2 in item["items"])
+    for line in wrap_text(f"Inclou: {names}", SMALL, 520)[:2]:
+      SCREEN.blit(SMALL.render(line, True, SOFT_TEXT), (panel.x + 30, y))
+      y += 21
+    ok, why = pack_req(item)
+    if not owned and not ok:
+      for line in wrap_text(why, SMALL, 520)[:2]:
+        SCREEN.blit(SMALL.render(line, True, COLOR_LOSE), (panel.x + 30, y))
+        y += 21
+  elif tab == "extras":
+    stock = SAVE["items"][item["field"]]
+    SCREEN.blit(SMALL.render(f"Ara en tens: {stock}", True, SOFT_TEXT), (panel.x + 30, y))
+    y += 21
+  elif not owned:
+    ok, why = req_check(item.get("req"))
+    if not ok:
+      SCREEN.blit(SMALL.render(why, True, COLOR_LOSE), (panel.x + 30, y))
+      y += 21
+  if not owned or tab == "extras":
+    ptxt = f"Preu: {price} punts" + (f"  (abans {orig}, oferta del dia)" if orig else "")
+    SCREEN.blit(FONT.render(ptxt, True, TEXT_COLOR), (panel.x + 30, panel.y + 372))
+    if pts < price:
+      miss = SMALL.render(f"Et falten {price - pts} punts", True, COLOR_LOSE)
+      SCREEN.blit(miss, (panel.right - 30 - miss.get_width(), panel.y + 376))
+  if app.shop_msg and time.time() - app.shop_msg[2] < 2.5:
+    m = FONT.render(app.shop_msg[0], True, app.shop_msg[1])
+    SCREEN.blit(m, (panel.centerx - m.get_width() // 2, panel.y + 404))
+
+  label, enabled = shop_primary(tab, key)
+  for rect, text, en in ((primary, label, enabled), (close, "Tanca", True)):
+    hover = en and rect.collidepoint(mouse)
+    fill = ((255, 240, 205) if hover else (245, 226, 185)) if en else (222, 208, 182)
+    pygame.draw.rect(SCREEN, fill, rect, border_radius=12)
+    pygame.draw.rect(SCREEN, HIGHLIGHT_COLOR if hover else (LINE_COLOR if en else (170, 155, 130)),
+                     rect, 4 if hover else 3, border_radius=12)
+    s = FONT.render(text, True, TEXT_COLOR if en else (160, 148, 128))
+    SCREEN.blit(s, (rect.centerx - s.get_width() // 2, rect.centery - s.get_height() // 2))
 
 
 def draw_shop(app):
@@ -3035,55 +3527,40 @@ def draw_shop(app):
   SCREEN.blit(pts, (WIDTH - 20 - pts.get_width(), 30))
 
   mouse = pygame.mouse.get_pos()
+  modal = app.shop_sel is not None
   for rect, key, label in shop_tab_rects():
     sel = key == app.shop_tab
-    hover = rect.collidepoint(mouse)
-    pygame.draw.rect(
-        SCREEN, (255, 240, 205) if (sel or hover) else (245, 226, 185),
-        rect, border_radius=10)
-    pygame.draw.rect(
-        SCREEN, HIGHLIGHT_COLOR if sel else LINE_COLOR, rect,
-        5 if sel else 3, border_radius=10)
-    s = FONT.render(label, True, TEXT_COLOR)
-    SCREEN.blit(s, (rect.centerx - s.get_width() // 2,
-                    rect.centery - s.get_height() // 2))
+    hover = not modal and rect.collidepoint(mouse)
+    pygame.draw.rect(SCREEN, (255, 240, 205) if (sel or hover) else (245, 226, 185),
+                     rect, border_radius=10)
+    pygame.draw.rect(SCREEN, HIGHLIGHT_COLOR if sel else LINE_COLOR, rect,
+                     4 if sel else 3, border_radius=10)
+    s = SMALL.render(label, True, TEXT_COLOR)
+    SCREEN.blit(s, (rect.centerx - s.get_width() // 2, rect.centery - s.get_height() // 2))
 
-  table = shop_table(app.shop_tab)
-  owned = SAVE["owned"][app.shop_tab]
-  equipped = SAVE["equipped"][app.shop_tab]
   for rect, key in shop_cards(app.shop_tab):
-    item = table[key]
-    is_eq = key == equipped
-    has = key in owned
-    hover = rect.collidepoint(mouse)
-    pygame.draw.rect(
-        SCREEN, (255, 240, 205) if hover else (250, 232, 195), rect,
-        border_radius=14)
-    pygame.draw.rect(
-        SCREEN, HIGHLIGHT_COLOR if is_eq else LINE_COLOR, rect,
-        5 if is_eq else 3, border_radius=14)
-    draw_item_preview(
-        app.shop_tab, key, pygame.Rect(rect.x + 15, rect.y + 14, 170, 92))
-    name = FONT.render(item["name"], True, TEXT_COLOR)
-    SCREEN.blit(name, (rect.centerx - name.get_width() // 2, rect.y + 116))
-    if is_eq:
-      txt, col = "EQUIPAT", COLOR_WIN
-    elif has:
-      txt, col = "Clica per equipar", (0, 100, 200)
-    elif SAVE["points"] >= item["price"]:
-      txt, col = f"{item['price']} punts", TEXT_COLOR
-    else:
-      txt, col = f"{item['price']} punts", COLOR_LOSE
-    s = SMALL.render(txt, True, col)
-    SCREEN.blit(s, (rect.centerx - s.get_width() // 2, rect.y + 150))
+    draw_shop_card(rect, app.shop_tab, key, not modal and rect.collidepoint(mouse))
 
-  if app.shop_msg and time.time() - app.shop_msg[2] < 2.5:
-    m = FONT.render(app.shop_msg[0], True, app.shop_msg[1])
-    SCREEN.blit(m, (WIDTH // 2 - m.get_width() // 2, 600))
+  # peu: oferta del dia, estoc i ajuda
+  dt, dk = deal_key()
+  dname = shop_table(dt)[dk]["name"]
+  deal = SMALL.render(
+      f"Oferta del dia: {TAB_NAMES[dt]} {dname} amb un 30% de descompte", True, COLOR_LOSE)
+  SCREEN.blit(deal, (WIDTH // 2 - deal.get_width() // 2, 580))
+  it = SAVE["items"]
+  stock = SMALL.render(
+      f"Tens: {it['hints']} pistes  -  {it['undos']} desfer  -  x2 en {it['double']} victòries",
+      True, SOFT_TEXT)
+  SCREEN.blit(stock, (WIDTH // 2 - stock.get_width() // 2, 606))
+  w = SMALL.render(f"Victòries contra el bot: {total_wins()}", True, SOFT_TEXT)
+  SCREEN.blit(w, (WIDTH // 2 - w.get_width() // 2, 632))
 
-  h = FONT.render("Clica un element per comprar-lo o equipar-lo", True, SOFT_TEXT)
+  h = FONT.render("Clica un element per veure'n el detall", True, SOFT_TEXT)
   SCREEN.blit(h, (WIDTH // 2 - h.get_width() // 2, HEIGHT - 60))
   draw_button(back_button_rect(), "< Enrere")
+
+  if modal:
+    draw_shop_detail(app)
 
 
 def point_at(mouse_pos):
@@ -3116,8 +3593,10 @@ class App:
     self.over_time = None
     self.anim = None
     self.anim_key = None
-    self.shop_tab = "boards"   # boards | pieces
+    self.shop_tab = "boards"   # boards | pieces | marks | fx | extras | packs
+    self.shop_sel = None       # (pestanya, clau) de la finestra de detall oberta
     self.shop_msg = None       # (text, color, instant)
+    self.fx = None             # celebració de victòria en marxa
     apply_theme()
 
   # ---------- menús ----------
@@ -3191,6 +3670,7 @@ class App:
       elif pick == "shop":
         self.state = "shop"
         self.shop_msg = None
+        self.shop_sel = None
       elif pick == "settings":
         self.state = "settings"
     elif s == "modes":
@@ -3268,9 +3748,20 @@ class App:
         self.running = False
         return
       if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_m):
-        self.state = "main"
+        if self.shop_sel:
+          self.shop_sel = None
+        else:
+          self.state = "main"
         return
       if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+        if self.shop_sel:
+          panel, primary, close = shop_modal_rects()
+          tab, key = self.shop_sel
+          if close.collidepoint(ev.pos) or not panel.collidepoint(ev.pos):
+            self.shop_sel = None
+          elif primary.collidepoint(ev.pos) and shop_primary(tab, key)[1]:
+            self.shop_action(tab, key)
+          return
         if back_button_rect().collidepoint(ev.pos):
           self.state = "main"
           return
@@ -3281,29 +3772,56 @@ class App:
             return
         for rect, key in shop_cards(self.shop_tab):
           if rect.collidepoint(ev.pos):
-            self.shop_pick(key)
+            self.shop_sel = (self.shop_tab, key)
+            self.shop_msg = None
             return
 
-  def shop_pick(self, key):
-    """Equipa un element si ja el tens; si no, el compra (si tens punts)."""
-    tab = self.shop_tab
+  def shop_say(self, text, ok=True):
+    self.shop_msg = (text, COLOR_WIN if ok else COLOR_LOSE, time.time())
+
+  def shop_action(self, tab, key):
+    """Compra (o equipa) l'element obert a la finestra de detall."""
     item = shop_table(tab)[key]
-    owned = SAVE["owned"][tab]
-    if key in owned:
-      msg = ("Equipat!", COLOR_WIN)
-    elif SAVE["points"] >= item["price"]:
-      SAVE["points"] -= item["price"]
-      owned.append(key)
-      msg = (f"Comprat: {item['name']}!", COLOR_WIN)
+    price, _orig = price_of(tab, key)
+    if tab == "extras":
+      if SAVE["points"] < price:
+        return self.shop_say(f"Et falten {price - SAVE['points']} punts", False)
+      field = item["field"]
+      if SAVE["items"][field] + item["amount"] > STOCK_MAX:
+        return self.shop_say("Ja en tens molts", False)
+      SAVE["points"] -= price
+      SAVE["items"][field] += item["amount"]
+      msg = f"Comprat: {item['name']}!"
+    elif tab == "packs":
+      if not pack_unowned(item):
+        return self.shop_say("Ja tens tot el pack", False)
+      ok, why = pack_req(item)
+      if not ok:
+        return self.shop_say(why, False)
+      if SAVE["points"] < price:
+        return self.shop_say(f"Et falten {price - SAVE['points']} punts", False)
+      SAVE["points"] -= price
+      for t, k in item["items"]:
+        if k not in SAVE["owned"][t]:
+          SAVE["owned"][t].append(k)
+        SAVE["equipped"][t] = k            # el pack s'equipa sencer
+      msg = f"Pack comprat i equipat: {item['name']}!"
+    elif key in SAVE["owned"][tab]:
+      SAVE["equipped"][tab] = key
+      msg = "Equipat!"
     else:
-      self.shop_msg = (
-          f"Et falten {item['price'] - SAVE['points']} punts", COLOR_LOSE,
-          time.time())
-      return
-    SAVE["equipped"][tab] = key
+      ok, why = req_check(item.get("req"))
+      if not ok:
+        return self.shop_say(why, False)
+      if SAVE["points"] < price:
+        return self.shop_say(f"Et falten {price - SAVE['points']} punts", False)
+      SAVE["points"] -= price
+      SAVE["owned"][tab].append(key)
+      SAVE["equipped"][tab] = key
+      msg = f"Comprat: {item['name']}!"
     apply_theme()
     write_save()
-    self.shop_msg = (msg[0], msg[1], time.time())
+    self.shop_say(msg)
 
   # ---------- inici / final de partida ----------
   def start_game(self):
@@ -3337,6 +3855,7 @@ class App:
     self.state = "play"
 
   def reset_view(self):
+    self.fx = None
     self.hint = None
     self.result = None
     self.over_time = None
@@ -3381,6 +3900,10 @@ class App:
           pts = max(1, base // 2)       # amb desfer: la meitat
         else:
           pts = base
+        doubled = SAVE["items"]["double"] > 0
+        if doubled:                     # multiplicador x2 de la botiga
+          pts *= 2
+          SAVE["items"]["double"] -= 1
         rec[0] += 1
         res["title"], res["color"] = "HAS GUANYAT!", COLOR_WIN
         if blocked:
@@ -3390,6 +3913,8 @@ class App:
           lines.append("(només 1 punt per haver usat la pista)")
         elif self.assisted:
           lines.append("(meitat de punts per haver usat desfer)")
+        if doubled:
+          lines.append(f"Multiplicador x2! (en queden {SAVE['items']['double']})")
       elif draw:
         pts = max(1, base // 5)
         if self.hinted:
@@ -3435,6 +3960,8 @@ class App:
 
     if kind == "go" and g.score_text:
       lines.insert(0, g.score_text)
+    if res["color"] == COLOR_WIN and SAVE["equipped"]["fx"] != "none":
+      self.fx = fx_new(SAVE["equipped"]["fx"])      # celebració de la botiga
     self.result = res
     write_save()
 
@@ -3443,8 +3970,8 @@ class App:
     g = self.game
     if self.mode == "online" or g.winner or g.draw or self.result:
       return False
-    if SAVE["points"] < undo_cost(self):    # no tens prou punts
-      return False
+    if SAVE["items"]["undos"] <= 0 and SAVE["points"] < undo_cost(self):
+      return False                          # ni estoc ni punts
     if self.mode == "local":
       return bool(g.stack)
     return any(s["turn"] == self.me for s in g.stack)
@@ -3455,8 +3982,8 @@ class App:
       return False
     if self.hint is not None:               # ja n'hi ha una pista a la pantalla
       return False
-    if SAVE["points"] < hint_cost(self):    # no tens prou punts
-      return False
+    if SAVE["items"]["hints"] <= 0 and SAVE["points"] < hint_cost(self):
+      return False                          # ni estoc ni punts
     return self.mode != "bot" or g.turn == self.me
 
   def press(self, key):
@@ -3475,7 +4002,7 @@ class App:
     g = self.game
     if self.mode == "online" or g.winner or g.draw or self.result:
       return
-    if SAVE["points"] < undo_cost(self):
+    if SAVE["items"]["undos"] <= 0 and SAVE["points"] < undo_cost(self):
       return
     changed = False
     if self.mode == "local":
@@ -3487,7 +4014,10 @@ class App:
         if g.turn == self.me:
           break
     if changed:
-      SAVE["points"] -= undo_cost(self)  # desfer costa punts
+      if SAVE["items"]["undos"] > 0:         # primer es gasta l'estoc del pack
+        SAVE["items"]["undos"] -= 1
+      else:
+        SAVE["points"] -= undo_cost(self)    # si no, desfer costa punts
       self.assisted = True
       self.hint = None
       self.bot_due = None
@@ -3502,7 +4032,9 @@ class App:
       return
     if self.anim and self.anim.active():
       return
-    if self.hint is not None or SAVE["points"] < hint_cost(self):
+    if self.hint is not None:
+      return
+    if SAVE["items"]["hints"] <= 0 and SAVE["points"] < hint_cost(self):
       return
     # la pista usa el bot més fort: sempre és la millor jugada que sap trobar
     h = make_bot(self.kind, HINT_PARAMS[self.kind]).choose(g, g.turn)
@@ -3511,7 +4043,10 @@ class App:
     if h is None:
       return
     self.hint = h
-    SAVE["points"] -= hint_cost(self)       # la pista costa punts
+    if SAVE["items"]["hints"] > 0:          # primer es gasta l'estoc del pack
+      SAVE["items"]["hints"] -= 1
+    else:
+      SAVE["points"] -= hint_cost(self)     # si no, la pista costa punts
     self.assisted = True
     self.hinted = True
     write_save()
