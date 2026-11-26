@@ -104,6 +104,8 @@ def present():
   sw, sh = max(1, int(WIDTH * scale)), max(1, int(HEIGHT * scale))
   VIEW = ((w - sw) // 2, (h - sh) // 2, sw, sh)
   DISPLAY.fill(FRAME_COLOR)
+  if not HAS_JS and (sw != w or sh != h) and _FRAME_SURFACE is not None:
+    paint_frame(DISPLAY, sw, sh, VIEW[:2])
   DISPLAY.blit(pygame.transform.smoothscale(SCREEN, (sw, sh)), VIEW[:2])
   pygame.display.flip()
 
@@ -494,7 +496,7 @@ BACKGROUND_THEMES = {
     "marble": dict(name="Marbre", price=800, desc="Gris perla i vetes geomètriques.", palette=((250,251,251),(210,218,223),(155,170,184)), motif="grid"),
 }
 BACKGROUND_DEFAULTS = {
-    "menu": ((241,247,250),(193,213,227),(145,177,197),"grid"),
+    "menu": ((248,245,229),(192,220,217),(69,117,115),"ratlla"),
     "morris": ((251,245,224),(230,205,159),(175,139,91),"grid"),
     "c4": ((237,248,255),(183,213,241),(99,155,205),"dots"),
     "chess": ((244,247,249),(198,213,228),(125,155,181),"grid"),
@@ -502,7 +504,7 @@ BACKGROUND_DEFAULTS = {
     "shogi": ((253,244,229),(239,211,184),(189,143,116),"waves"),
     "dino": ((250,248,234),(239,219,177),(185,151,106),"hills"),
 }
-BG_TARGETS = {"menu":"Menú principal", "morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go", "shogi":"Shogi", "dino":"Dino Run"}
+BG_TARGETS = {"menu":"Tots els menús", "morris":"Tres en ratlla", "c4":"4 en ratlla", "chess":"Escacs", "go":"Go", "shogi":"Shogi", "dino":"Dino Run"}
 SHOP_BG_TARGET = "menu"
 
 SHOP_TABS = (("backgrounds", "Fons"), ("boards", "Taulers"), ("pieces", "Fitxes"), ("marks", "Marques"),
@@ -2721,14 +2723,13 @@ def draw_padlock(cx, cy):
 
 def draw_locked_overlay(rect):
   veil = pygame.Surface(rect.size, pygame.SRCALPHA)
-  veil.fill((16, 18, 22, 55))
+  pygame.draw.rect(veil, (16, 18, 22, 55), veil.get_rect(), border_radius=14)
   SCREEN.blit(veil, rect.topleft)
   prev_clip = SCREEN.get_clip()
-  SCREEN.set_clip(rect)
-  draw_chain((rect.x - 6, rect.y + 4), (rect.right + 6, rect.bottom - 4))
-  draw_chain((rect.x - 6, rect.bottom - 4), (rect.right + 6, rect.y + 4))
+  SCREEN.set_clip(rect.inflate(-6, -8))
+  draw_chain((rect.x + 8, rect.y + 12), (rect.right - 8, rect.bottom - 12))
+  draw_chain((rect.x + 8, rect.bottom - 12), (rect.right - 8, rect.y + 12))
   SCREEN.set_clip(prev_clip)
-  draw_padlock(rect.centerx, rect.centery - 4)
 
 
 MENU_NAMES = {"morris": "Tres en ratlla", "c4": "4 en ratlla", "chess": "Escacs",
@@ -2823,7 +2824,7 @@ def draw_menu_icon(key, a):
 
 def draw_square_menu(title, subtitle, opts, mouse_pos, hint):
   """Menú principal: quadrats amb una imatge i només el nom del joc."""
-  SCREEN.fill(BG_COLOR)
+  draw_background("menu")
   t = BIG_FONT.render(title, True, TEXT_COLOR)
   SCREEN.blit(t, (WIDTH // 2 - t.get_width() // 2, 22))
   sub = FONT.render(subtitle, True, SOFT_TEXT)
@@ -2858,7 +2859,7 @@ def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
   if len(opts) >= 6:
     draw_square_menu(title, subtitle, opts, mouse_pos, hint)
     return
-  draw_background(ACTIVE_BACKGROUND)
+  draw_background("menu")
 
   t = BIG_FONT.render(title, True, TEXT_COLOR)
   SCREEN.blit(t, (WIDTH // 2 - t.get_width() // 2, 110))
@@ -2879,6 +2880,21 @@ def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
         SCREEN, HIGHLIGHT_COLOR if hover else LINE_COLOR, rect,
         5 if hover else 3, border_radius=14)
 
+    if locked:
+      draw_locked_overlay(rect)
+      plate = pygame.Rect(rect.centerx - 133, rect.centery - 24, 266, 48)
+      pygame.draw.rect(SCREEN, (204, 207, 209), plate, border_radius=10)
+      pygame.draw.rect(SCREEN, (81, 85, 90), plate, 2, border_radius=10)
+      draw_padlock(plate.x + 30, plate.centery - 6)
+      title = TITLE_FONT.render(f"{i + 1} - {label}", True, (23, 24, 25))
+      if title.get_width() > plate.width - 65:
+        title = pygame.transform.smoothscale(title, (plate.width - 65, title.get_height()))
+      SCREEN.blit(title, title.get_rect(center=(plate.centerx + 23, plate.centery)))
+      # El requisit és sempre el mateix, independentment del saldo actual.
+      cost = SMALL.render(f"{UNLOCK_POINTS} punts", True, (0, 0, 0))
+      SCREEN.blit(cost, cost.get_rect(midtop=(rect.centerx, rect.bottom + 8)))
+      continue
+
     color = TEXT_COLOR if enabled else (55, 55, 55)
     compact = rect.height < 80
     t1 = TITLE_FONT.render(f"{i + 1} - {label}", True, color)
@@ -2889,9 +2905,6 @@ def draw_choice_menu(title, subtitle, opts, mouse_pos, hint):
       t2 = pygame.transform.smoothscale(t2, (rect.width - 18, t2.get_height()))
     SCREEN.blit(t2, (rect.centerx - t2.get_width() // 2,
                      rect.y + (rect.height - 27 if compact else 48)))
-
-    if locked:
-      draw_locked_overlay(rect)
 
   h = FONT.render(hint, True, SOFT_TEXT)
   SCREEN.blit(h, (WIDTH // 2 - h.get_width() // 2, HEIGHT - 60))
@@ -4067,11 +4080,8 @@ def draw_shop_detail(app):
 
 def draw_shop(app):
   draw_background("menu")
-  pygame.draw.rect(SCREEN, (236, 244, 247), (18, 18, WIDTH - 36, HEIGHT - 36), border_radius=22)
-  pygame.draw.rect(SCREEN, (171, 145, 102), (18, 18, WIDTH - 36, HEIGHT - 36), 2, border_radius=22)
-
-  t = BIG_FONT.render("Botiga", True, TEXT_COLOR)
-  SCREEN.blit(t, (150, 24))
+  # El títol queda al centre, lluny del botó Enrere i del saldo.
+  home_label("Botiga", (WIDTH // 2, 36), BIG_FONT, TEXT_COLOR)
   if app.shop_tab == "backgrounds":
     left, right = background_selector_rects()
     draw_button(left, "<", small=True)
@@ -4080,7 +4090,7 @@ def draw_shop(app):
     home_label("Aplica a:", (157,77), SMALL, SOFT_TEXT)
   else:
     sub = SMALL.render("Aspectes, efectes i extres", True, SOFT_TEXT)
-    SCREEN.blit(sub, (150, 72))
+    SCREEN.blit(sub, sub.get_rect(center=(WIDTH // 2, 77)))
   pts_box = pygame.Rect(WIDTH - 214, 28, 170, 38)
   pygame.draw.rect(SCREEN, (252, 239, 206), pts_box, border_radius=19)
   pygame.draw.circle(SCREEN, (183,126,41), (pts_box.x + 20, pts_box.centery), 10)
@@ -4888,7 +4898,7 @@ class App:
   # ---------- dibuix ----------
   def draw(self):
     global ACTIVE_BACKGROUND
-    ACTIVE_BACKGROUND = self.kind if self.state in ("modes", "diff", "side", "play", "guide") else "menu"
+    ACTIVE_BACKGROUND = self.kind if self.state == "play" else "menu"
     if self.state in ("saves", "achievements", "guide"):
       self.draw_extra()
     elif self.state == "play":
@@ -5297,7 +5307,7 @@ def draw_demo(kind,step,area):
     if step in (0,2): pygame.draw.circle(SCREEN,HINT_COLOR,(x+2*d+d//2,y+2*d+d//2),8)
 
 def draw_extra(app):
-  draw_background(app.kind if app.state == "guide" else "menu"); draw_button(back_button_rect(),'< Enrere')
+  draw_background("menu"); draw_button(back_button_rect(),'< Enrere')
   if app.state=='saves':
     text_center('Desar partida' if app.save_mode else 'Partides desades',55,TITLE_FONT)
     text_center(f"{sum(x is not None for x in SAVE['slots'])}/10 espais compartits",95)
@@ -15890,8 +15900,8 @@ def home_tool_icon(key, center, color, size=54):
 
 def draw_home_menu(app, opts, mouse):
   draw_background("menu")
-  pygame.draw.rect(SCREEN, background_palette("menu")[0], (0, 0, WIDTH, 130))
-  pygame.draw.rect(SCREEN, (191, 166, 122), (0, 128, WIDTH, 3))
+  pygame.draw.line(SCREEN, (134, 160, 149), (38, 125), (245, 125), 1)
+  pygame.draw.line(SCREEN, (134, 160, 149), (455, 125), (662, 125), 1)
   ink=(60,46,34); muted=(104,87,68); gold=(183,126,41)
   home_label('RATLLA', (350, 42), BIG_FONT, ink)
   home_label('Jocs de taula i arcade', (350, 81), TITLE_FONT, muted)
@@ -16068,6 +16078,9 @@ class DinoRun:
 ACTIVE_BACKGROUND = "menu"
 FRAME_COLOR = (213,226,233)
 _BROWSER_FRAME = None
+_FRAME_SURFACE = None
+_FRAME_TILE = None
+_FRAME_TILE_KEY = None
 _BACKGROUND_CACHE = {}
 
 def background_selector_rects():
@@ -16092,7 +16105,34 @@ def background_surface(target, key=None, size=(WIDTH,HEIGHT)):
   layer=pygame.Surface(size,pygame.SRCALPHA)
   c=(*accent,38)
   step=max(12,w//14)
-  if motif=="grid":
+  if motif=="ratlla":
+    # Retícula inspirada en les línies dels taulers i les fitxes de Ratlla.
+    # Motiu vectorial original, sense imatges externes.
+    unit = min(w / 700, h / 750)
+    tile = max(26, round(168 * unit))
+    r = max(8, round(47 * unit))
+    lw = max(1, round(1.3 * unit))
+    dot = max(1, round(3.4 * unit))
+    for j, y in enumerate(range(tile//2, h+tile, tile)):
+      for x in range(tile//2-(j%2)*tile//2, w+tile, tile):
+        # Tres quadrats concèntrics i connectors, com el joc clàssic.
+        sizes = [r, max(5,round(r*.66)), max(3,round(r*.32))]
+        for z in sizes:
+          pygame.draw.rect(layer, (*accent,39), (x-z,y-z,2*z,2*z), lw)
+        z=sizes[-1]
+        for a,b in (((x-r,y),(x-z,y)),((x+z,y),(x+r,y)),((x,y-r),(x,y-z)),((x,y+z),(x,y+r))):
+          pygame.draw.line(layer,(*accent,39),a,b,lw)
+        for px,py in ((x-r,y-r),(x+r,y+r),(x,y-r)):
+          pygame.draw.circle(layer,(*accent,60),(px,py),dot)
+        pygame.draw.circle(layer,(*accent,37),(x+r,y-r),dot,lw)
+    for y in range(tile//3,h,tile):
+      for x in range(tile//3,w,tile):
+        pygame.draw.circle(layer,(*accent,30),(x,y),max(1,lw))
+    # Doble filet decoratiu, continu a totes les pantalles del menú.
+    for inset in (max(3,round(8*unit)),max(6,round(13*unit))):
+      if w>2*inset and h>2*inset:
+        pygame.draw.rect(layer,(*accent,48),(inset,inset,w-2*inset,h-2*inset),lw,border_radius=max(2,round(15*unit)))
+  elif motif=="grid":
     for x in range(-h,w,step*2):
       pygame.draw.line(layer,c,(x,0),(x+h,h),1)
       pygame.draw.line(layer,c,(x+w,0),(x+w-h,h),1)
@@ -16117,16 +16157,49 @@ def background_surface(target, key=None, size=(WIDTH,HEIGHT)):
   surf.blit(layer,(0,0)); _BACKGROUND_CACHE[ck]=surf
   return surf
 
+def paint_frame(display, w, h, origin):
+  """Continua el patró de la pantalla als marges de l'escriptori."""
+  global _FRAME_TILE, _FRAME_TILE_KEY
+  key = (id(_FRAME_SURFACE), w, h)
+  if key != _FRAME_TILE_KEY:
+    _FRAME_TILE = pygame.transform.smoothscale(_FRAME_SURFACE, (w,h))
+    _FRAME_TILE_KEY = key
+  dw,dh = display.get_size()
+  for y in range(origin[1]%h-h,dh,h):
+    for x in range(origin[0]%w-w,dw,w):
+      display.blit(_FRAME_TILE,(x,y))
+
+
+def background_png(surf):
+  """Codificació PNG RGB amb la biblioteca estàndard (compatible amb pygbag)."""
+  import struct
+  w,h=surf.get_size()
+  raw=pygame.image.tostring(surf,"RGB")
+  stride=w*3
+  rows=b"".join(b"\x00"+raw[y*stride:(y+1)*stride] for y in range(h))
+  def chunk(tag,data):
+    return struct.pack(">I",len(data))+tag+data+struct.pack(">I",zlib.crc32(tag+data)&0xffffffff)
+  return (b"\x89PNG\r\n\x1a\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",w,h,8,2,0,0,0))
+          +chunk(b"IDAT",zlib.compress(rows,6))+chunk(b"IEND",b""))
+
+
 def draw_background(target):
-  global FRAME_COLOR,_BROWSER_FRAME
+  global FRAME_COLOR,_BROWSER_FRAME,_FRAME_SURFACE
   surf=background_surface(target)
   SCREEN.blit(surf,(0,0))
+  _FRAME_SURFACE=surf
   FRAME_COLOR=background_palette(target)[1]
-  if HAS_JS and FRAME_COLOR != _BROWSER_FRAME:
+  frame_key=(target,SAVE["backgrounds"].get(target,"auto"))
+  if HAS_JS and frame_key != _BROWSER_FRAME:
     try:
       col='#%02x%02x%02x'%FRAME_COLOR
-      js.window.eval("document.documentElement.style.setProperty('background','%s','important');document.body.style.setProperty('background','%s','important');"%(col,col))
-      _BROWSER_FRAME=FRAME_COLOR
+      try:
+        encoded=base64.b64encode(background_png(surf)).decode('ascii')
+        css=f'{col} url("data:image/png;base64,{encoded}") center center / contain repeat'
+      except Exception:
+        css=col
+      js.window.eval("document.documentElement.style.setProperty('background',"+json.dumps(css)+",'important');document.body.style.setProperty('background',"+json.dumps(css)+",'important');")
+      _BROWSER_FRAME=frame_key
     except Exception: pass
 
 async def main():
