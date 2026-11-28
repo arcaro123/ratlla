@@ -181,8 +181,8 @@ function show_infobox() {
     <title>ratlla</title>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="viewport" content="height=device-height, initial-scale=1.0">
+    
+    
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes"/>
 
@@ -285,6 +285,47 @@ function show_infobox() {
     </script>
 
     <script src="https://pygame-web.github.io/cdn/0.9.3//browserfs.min.js"></script>
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style id="ratlla-responsive">
+  html, body {
+    width: 100%; height: 100%; margin: 0;
+    overflow: hidden; overscroll-behavior: none;
+    background: #101522 !important;
+  }
+  #canvas {
+    position: fixed !important;
+    top: 50% !important; left: 50% !important;
+    bottom: auto !important; right: auto !important;
+    transform: translate(-50%, -50%) !important;
+    margin: 0 !important; border: 0 !important; padding: 0 !important;
+    width: min(100vw, 177.777778vh) !important;
+    height: min(100vh, 56.25vw) !important;
+    width: min(100vw, 177.777778dvh) !important;
+    height: min(100dvh, 56.25vw) !important;
+    touch-action: none;
+    user-select: none; -webkit-user-select: none;
+  }
+  #infobox {
+    max-width: calc(100vw - 32px);
+    box-sizing: border-box;
+    text-align: center;
+  }
+  #ratlla-rotate {
+    display: none;
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top));
+    left: 12px; right: 12px;
+    color: #ddd;
+    font: 14px/1.4 system-ui, sans-serif;
+    text-align: center;
+    pointer-events: none;
+  }
+  @media (orientation: portrait) and (pointer: coarse) {
+    #ratlla-rotate { display: block; }
+  }
+</style>
 
 </head>
 
@@ -434,5 +475,6 @@ frameborder="1"
 
     </script>
 
+<div id="ratlla-rotate">Gira el mòbil en horitzontal per jugar amb una pantalla més gran.</div>
 </body>
 </html>
