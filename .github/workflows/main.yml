@@ -1,0 +1,54 @@
+name: Deploy RATLLA to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ratlla-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Pygbag and FFmpeg
+        run: |
+          python -m pip install pygbag==0.9.3
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Prepare web game
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/ratlla"
+          mkdir -p "$stage"
+          test -s main.py
+          cp main.py ratlla_*.py "$stage/"
+          cp -R assets "$stage/"
+          find "$stage" -type d -name __pycache__ -prune -exec rm -rf {} +
+          while IFS= read -r -d '' file; do
+            ffmpeg -nostdin -loglevel error -y -i "$file" -c:a libvorbis -q:a 5 "${file%.*}.ogg"
+            rm "$file"
+          done < <(find "$stage/assets" -type f -iname '*.wav' -print0)
+          sed -i 's/\.wav/\.ogg/g' "$stage/ratlla_audio.py"
+          python -m py_compile "$stage"/*.py
+          find "$stage" -type d -name __pycache__ -prune -exec rm -rf {} +
+      - name: Build with Pygbag
+        run: |
+          python -m pygbag --build --no_opt "$RUNNER_TEMP/ratlla"
+          test -s "$RUNNER_TEMP/ratlla/build/web/index.html"
+          touch "$RUNNER_TEMP/ratlla/build/web/.nojekyll"
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ${{ runner.temp }}/ratlla/build/web
