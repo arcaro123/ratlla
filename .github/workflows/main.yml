@@ -46,6 +46,64 @@ jobs:
           python -m pygbag --build --no_opt "$RUNNER_TEMP/ratlla"
           test -s "$RUNNER_TEMP/ratlla/build/web/index.html"
           touch "$RUNNER_TEMP/ratlla/build/web/.nojekyll"
+      - name: Fit game to desktop and mobile screens
+        shell: bash
+        run: |
+          python - "$RUNNER_TEMP/ratlla/build/web/index.html" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          path = Path(sys.argv[1])
+          html = path.read_text(encoding="utf-8")
+          html, count = re.subn(r'<meta\s+name="viewport"[^>]*>', '', html, flags=re.I)
+          assert count >= 1, "Missing Pygbag viewport"
+          responsive = """
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style id="ratlla-responsive">
+            html, body {
+              width: 100%; height: 100%; margin: 0;
+              overflow: hidden; overscroll-behavior: none;
+              background: #101522 !important;
+            }
+            #canvas {
+              position: fixed !important;
+              top: 50% !important; left: 50% !important;
+              bottom: auto !important; right: auto !important;
+              transform: translate(-50%, -50%) !important;
+              margin: 0 !important; border: 0 !important; padding: 0 !important;
+              width: min(100vw, 177.777778vh) !important;
+              height: min(100vh, 56.25vw) !important;
+              width: min(100vw, 177.777778dvh) !important;
+              height: min(100dvh, 56.25vw) !important;
+              touch-action: none;
+              user-select: none; -webkit-user-select: none;
+            }
+            #infobox {
+              max-width: calc(100vw - 32px);
+              box-sizing: border-box;
+              text-align: center;
+            }
+            #ratlla-rotate {
+              display: none;
+              position: fixed;
+              top: max(12px, env(safe-area-inset-top));
+              left: 12px; right: 12px;
+              color: #ddd;
+              font: 14px/1.4 system-ui, sans-serif;
+              text-align: center;
+              pointer-events: none;
+            }
+            @media (orientation: portrait) and (pointer: coarse) {
+              #ratlla-rotate { display: block; }
+            }
+          </style>
+          """
+          assert '</head>' in html and '</body>' in html
+          html = html.replace('</head>', responsive + '\n</head>', 1)
+          html = html.replace('</body>', '<div id="ratlla-rotate">Gira el mòbil en horitzontal per jugar amb una pantalla més gran.</div>\n</body>', 1)
+          path.write_text(html, encoding="utf-8")
+          PY
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
