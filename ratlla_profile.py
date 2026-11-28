@@ -53,14 +53,14 @@ def statistics(p,s,games,levels,titles,level_info,mine_levels,tab,mouse):
     for i,label in enumerate(('Estratègia','Dificultats','Arcade')): button(p,TABS[i],label,mouse,accent=tab==i)
     rec=total(s,games,levels); w,l,d=rec; n=sum(rec)
     if tab in (0,1):
-        for i,(label,v) in enumerate((('Partides contra bot',n),('Victòries',w),('Derrotes',l),('Empats',d))): metric(p,24+(i%2)*330,164+(i//2)*87,322,label,v)
+        for i,(label,v) in enumerate((('Partides contra l’ordinador',n),('Victòries',w),('Derrotes',l),('Empats',d))): metric(p,24+(i%2)*330,164+(i//2)*87,322,label,v)
         p.text('Percentatge de victòries',24,343,14,MUTED,'bold'); p.text(f'{100*w/n:.1f}%' if n else '—',300,338,23,GOLD,'serif',align='right')
         p.text('Millor ratxa',365,343,14,MUTED,'bold'); p.text(str(max(s['best_streaks'].values(),default=0)),676,338,23,GOLD,'serif',align='right')
         p.text('V = victòries · D = derrotes · E = empats',24,378,12,MUTED)
         rows=[(titles[g],total(s,[g],levels)) for g in games] if tab==0 else [(level_info[l][0].capitalize(),total(s,games,[l])) for l in levels]
         for i,(label,r) in enumerate(rows): record_row(p,400+i*57,label,r)
         if tab==0: p.text(f'Partides locals finalitzades: {sum(total(s,games,["local"]))} · Sense atribuir-les al perfil',24,703,12,MUTED,maxw=652)
-        else: p.text('Les partides online no tenen historial registrat.',24,703,12,MUTED)
+        else: p.text('Les partides en línia no tenen historial registrat.',24,703,12,MUTED)
     else:
         dp=s['dino_profile']; p.text('Dino Run',24,166,22,IVORY,'serif')
         for i,(label,v) in enumerate((('Curses finalitzades',dp['runs']),('Rècord de puntuació',s['dino_best']),('Monedes recollides',dp['coins']),('Millor temps',str(dp['time'])+' s'))): metric(p,24+(i%2)*330,198+(i//2)*85,322,label,v)
@@ -133,7 +133,7 @@ def thumbnail(p,slot,state,x,y):
                 else: p.circle((xx+cell//2,yy+cell//2),max(2,cell//2-1),IVORY if v>0 else (24,32,36),None)
 
 def slots_screen(p,s,titles,level_info,page,mouse,save_mode,current,pending,decode,locked):
-    base(p,'Desar partida' if save_mode else 'Partides desades',f'{sum(v is not None for v in s["slots"])} / 10 espais'); button(p,BACK,'‹ Enrere',mouse)
+    base(p,'Desar la partida' if save_mode else 'Partides desades',f'{sum(v is not None for v in s["slots"])} / 10 espais'); button(p,BACK,'‹ Enrere',mouse)
     for j,i in enumerate(range(page*5,page*5+5)):
         y=125+j*108; slot=s['slots'][i]; p.rect((24,y,652,100),PANEL,LINE)
         if slot:
@@ -141,10 +141,10 @@ def slots_screen(p,s,titles,level_info,page,mouse,save_mode,current,pending,deco
             except (KeyError,ValueError,TypeError,IndexError): p.image(slot['kind']+'_card.jpg',(34,y+9,84,82))
             p.text(f'{i+1:02}  /  {titles.get(slot["kind"],slot["kind"])}',132,y+10,18,IVORY,'serif',maxw=330)
             mode=slot.get('mode'); difficulty=level_info.get(slot.get('difficulty'),('—',))[0].capitalize(); blocked=mode=='bot' and locked(slot.get('difficulty'))
-            p.text(f'{"Contra bot · "+difficulty if mode=="bot" else "Local" if mode=="local" else mode or "—"}  ·  {slot.get("moves",0)} mov.',132,y+38,13,MUTED,maxw=320)
+            p.text(f'{"Contra l’ordinador · "+difficulty if mode=="bot" else "Local" if mode=="local" else mode or "—"}  ·  {slot.get("moves",0)} mov.',132,y+38,13,MUTED,maxw=320)
             p.text(slot.get('date') or 'Data no disponible',132,y+61,12,MUTED,maxw=320)
             button(p,(486,y+12,178,32),'Actualitza' if save_mode else 'Bloquejada' if blocked else 'Continuar',mouse,(i==current) if save_mode else not blocked,True)
-            button(p,(486,y+55,178,32),'Confirma eliminació' if pending==i else 'Eliminar',mouse)
+            button(p,(486,y+55,178,32),'Confirma l’eliminació' if pending==i else 'Eliminar',mouse)
         else:
             p.text(f'{i+1:02}  /  Espai lliure',44,y+20,18,MUTED,'serif'); p.text('Disponible per desar una partida',44,y+50,13,DIM)
             if save_mode: button(p,(486,y+12,178,32),'Desar aquí',mouse,True,True)
