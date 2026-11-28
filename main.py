@@ -92,7 +92,10 @@ VIEW_SIZE = (WIDTH, HEIGHT)
 
 
 def select_screen(home=False):
-  global SCREEN, _HOME_SCREEN
+  global SCREEN, _HOME_SCREEN, _FRAME_SURFACE, FRAME_COLOR
+  # A frame belongs to one screen only, never to the next menu.
+  _FRAME_SURFACE = None
+  FRAME_COLOR = (21,41,47)
   if home:
     if _HOME_SCREEN is None:
       _HOME_SCREEN = pygame.Surface(HOME_SIZE)
@@ -111,18 +114,23 @@ def mouse_pos():
   return logical_pos(pygame.mouse.get_pos())
 
 
+def fitted_view(display_size, logical_size):
+  w,h=display_size; lw,lh=logical_size
+  scale=min(w/lw,h/lh)
+  sw,sh=max(1,int(lw*scale)),max(1,int(lh*scale))
+  return ((w-sw)//2,(h-sh)//2,sw,sh)
+
 def present():
   global VIEW, VIEW_SIZE, DISPLAY
   DISPLAY = pygame.display.get_surface()
   w, h = DISPLAY.get_size()
-  lw, lh = SCREEN.get_size()
-  scale = min(w / lw, h / lh)
-  sw, sh = max(1, int(lw * scale)), max(1, int(lh * scale))
-  VIEW = ((w - sw) // 2, (h - sh) // 2, sw, sh)
-  VIEW_SIZE = (lw, lh)
-  DISPLAY.fill(FRAME_COLOR)
-  if (sw != w or sh != h) and _FRAME_SURFACE is not None and _FRAME_SURFACE.get_size() == VIEW_SIZE:
-    paint_frame(DISPLAY, sw, sh, VIEW[:2])
+  VIEW_SIZE = SCREEN.get_size()
+  VIEW = fitted_view((w,h),VIEW_SIZE)
+  sw,sh=VIEW[2:]
+  DISPLAY.fill((21,41,47))
+  # One full-canvas image, not tiled copies of the game viewport.
+  if _FRAME_SURFACE is not None and _FRAME_SURFACE.get_size() == (w,h):
+    DISPLAY.blit(_FRAME_SURFACE,(0,0))
   DISPLAY.blit(SCREEN if (sw, sh) == VIEW_SIZE else pygame.transform.smoothscale(SCREEN, (sw, sh)), VIEW[:2])
   pygame.display.flip()
 
@@ -852,8 +860,8 @@ BOARD_THEMES.update({
 PIECE_STYLES.update({
  'ivory_carved':dict(name='Ivori tallat',price=720,deco=5,w=((226,211,172),(83,75,53)),b=((112,69,39),(25,39,34)),c1=((226,211,172),(83,75,53)),c2=((112,69,39),(25,39,34)),desc='Discs de marbre clar i noguera amb segell gravat.'),
  'onyx_facet':dict(name='Ònix facetat',price=980,deco=6,w=((233,231,223),(83,75,53)),b=((47,53,62),(25,39,34)),c1=((233,231,223),(83,75,53)),c2=((47,53,62),(25,39,34)),desc='Peces hexagonals de pedra polida.'),
- 'steel_circuit':dict(name='Acer circuit',price=1140,deco=7,w=((187,206,211),(83,75,53)),b=((34,109,116),(25,39,34)),c1=((187,206,211),(83,75,53)),c2=((34,109,116),(25,39,34)),desc='Discs metàl·lics amb pistes gravades.'),
- 'jade_lotus':dict(name='Jade lotus',price=1320,deco=8,w=((188,219,160),(83,75,53)),b=((64,102,75),(25,39,34)),c1=((188,219,160),(83,75,53)),c2=((64,102,75),(25,39,34)),desc='Pedra verda amb motiu floral tallat.'),
+ 'steel_circuit':dict(name='Acer amb circuits',price=1140,deco=7,w=((187,206,211),(83,75,53)),b=((34,109,116),(25,39,34)),c1=((187,206,211),(83,75,53)),c2=((34,109,116),(25,39,34)),desc='Discs metàl·lics amb pistes gravades.'),
+ 'jade_lotus':dict(name='Jade de lotus',price=1320,deco=8,w=((188,219,160),(83,75,53)),b=((64,102,75),(25,39,34)),c1=((188,219,160),(83,75,53)),c2=((64,102,75),(25,39,34)),desc='Pedra verda amb motiu floral tallat.'),
 })
 MARK_STYLES.update({
  'compass':dict(name='Brúixola',price=420,color=(240,205,124),symbol='compass',desc='Quatre puntes de llum indiquen la jugada.'),
@@ -3103,11 +3111,11 @@ def status_text(app):
     return f"Salta amb ESPAI, W, fletxa amunt o clic · puntuació {g.score}"
   if g.winner:
     if app.mode == "bot":
-      base = "Has guanyat!!" if g.winner == app.me else "Ha guanyat l'ordinador"
+      base = "Has guanyat!" if g.winner == app.me else "Ha guanyat l'ordinador"
     elif app.mode == "online":
-      base = "Has guanyat!!" if g.winner == app.me else "Ha guanyat el rival"
+      base = "Has guanyat!" if g.winner == app.me else "Ha guanyat el rival"
     else:
-      base = f"¡¡GUANYEN {side_label(kind, g.winner)}!!"
+      base = f"GUANYEN {side_label(kind, g.winner)}!"
     if kind == "morris" and g.blocked:
       base += " (rival bloquejat)"
     elif kind == "chess":
@@ -3265,7 +3273,7 @@ def draw_morris(app):
     me = "BLANQUES" if app.me == "W" else "NEGRES"
     role = f"Tu: {me}  -  Bot {LEVEL_INFO[app.difficulty][0].capitalize()}"
   else:
-    role = f"Ets les: {'BLANQUES' if app.me == 'W' else 'NEGRES'}"
+    role = f"Jugues amb: {'BLANQUES' if app.me == 'W' else 'NEGRES'}"
   SCREEN.blit(FONT.render(role, True, SOFT_TEXT), (20, 60))
 
   st = current_style()
@@ -4377,7 +4385,7 @@ class App:
       return (GAME_TITLES[self.kind], "Tria el mode de joc", [
           ("local", "JUGAR EN LOCAL", "Dos jugadors a la mateixa pantalla", True),
           ("bot", "CONTRA L'ORDINADOR", "Guanya punts per cada victòria", True),
-          ("online", "JUGAR ONLINE", online_desc, online_ok),
+          ("online", "JUGAR EN LÍNIA", online_desc, online_ok),
           ("guide", "COM ES JUGA", "Regles i demostració", True),
       ], "Clica una opció o prem 1 / 2 / 3   -   M = enrere")
     if s == "diff":
@@ -4397,7 +4405,7 @@ class App:
       return ("Qui comença?", "El primer jugador comença la partida", [
           ("first", "COMENCES TU", f"Tu portes {a}", True),
           ("second", "COMENÇA L'ORDINADOR", f"Tu portes {b}", True),
-          ("random", "A L'ATZAR", "Es decideix a sort", True),
+          ("random", "A L'ATZAR", "Es decideix a l’atzar", True),
       ], "Clica una opció o prem 1 / 2 / 3   -   M = enrere")
     r = self.rules
     return ("Configuració", "Regles de Tres en ratlla (es desen soles)", [
@@ -16211,7 +16219,7 @@ def draw_home_menu(app, opts, mouse):
   if getattr(app, '_premium_bg_key', None) != bg_key:
     painter.custom_background = None
     if bg_key != 'auto':
-      custom = background_surface('menu',bg_key,HOME_SIZE).copy()
+      custom = background_surface('menu',bg_key,HOME_SIZE,fit=True).copy()
       tint = pygame.Surface(HOME_SIZE, pygame.SRCALPHA)
       tint.fill((23,43,49,174)); custom.blit(tint,(0,0))
       painter.custom_background = custom
@@ -16240,7 +16248,7 @@ def draw_premium_secondary(app, title, sub, opts, hint):
   if getattr(app, '_secondary_bg_key', None) != bg_key:
     painter.custom_background = None
     if bg_key != 'auto':
-      custom = background_surface('menu',bg_key,(WIDTH,HEIGHT)).copy()
+      custom = background_surface('menu',bg_key,(WIDTH,HEIGHT),fit=True).copy()
       tint = pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
       tint.fill((23,43,49,174)); custom.blit(tint,(0,0))
       painter.custom_background = custom
@@ -16938,7 +16946,7 @@ def draw_background(target):
 # ---------------------------------------------------------------
 _DinoBase = DinoRun
 _DINO_MODES = {'endless':('Infinit',0), 'sprint':('Sprint',60), 'expedition':('Expedició',120)}
-_DINO_SKINS = [('Verd clàssic',0,(72,126,92)),('Ambre',200,(192,118,56)),('Glacial',500,(74,147,184)),('Obsidiana',1000,(90,81,117)),('Esmeralda',1800,(35,164,123)),('Daurat',3000,(205,164,62))]
+_DINO_SKINS = [('Verd clàssic',0,(72,126,92)),('Ambre',200,(192,118,56)),('Glacial',500,(74,147,184)),('Obsidiana',1000,(90,81,117)),('Maragda',1800,(35,164,123)),('Daurat',3000,(205,164,62))]
 _DINO_TASKS = [('temps', 'Aguanta 30 segons',30),('coins','Recull 12 monedes',12),('cleared','Esquiva 8 obstacles',8)]
 DINO_HAZARDS.update(tumble=(38,38), arch=(82,36), crystal=(35,47), drone=(47,24))
 DINO_LABELS.update(tumble='Planta rodolant',arch='Barrera baixa',crystal='Cristall',drone='Robot volador')
@@ -17293,7 +17301,7 @@ def draw_dino(app):
     pygame.draw.rect(SCREEN,(28,45,43),(145,138,410,32),border_radius=9)
     dino_text(g.notice,(350,154),SMALL,(248,221,137))
   pygame.draw.rect(SCREEN,(28,45,43),(0,650,WIDTH,100))
-  dino_text('Toca per saltar · Trampolí vermell: puja al pont · dins la cova hi ha trampes',(350,668),SMALL)
+  dino_text('Toca per saltar · Trampolí vermell: puja al pont · Dins la cova hi ha trampes',(350,668),SMALL)
   labels={'menu':'Menú','restart':'Reinicia','save':'Desa','pause':'Continua' if g.paused else 'Pausa','jump':'SALTAR'}
   for k,r in dino_control_rects(): dino_ui_button(r,labels[k],k=='jump')
   if g.paused and not g.winner:
@@ -17405,7 +17413,7 @@ GUIDES = {
   ('Trampolí vermell','Quan siguis sobre el trampolí vermell, toca per saltar més amunt. També pots saltar-hi a sobre. Si continues corrent, et quedes a baix.','Mira com el trampolí et porta al pont.','lanes'),
   ('Trampes al pont','A dalt hi ha cactus i roques, però tens un tram lliure per aterrar. Salta quan t’hi acostis. No es pot saltar de nou a l’aire.','Prova un salt sobre un cactus del pont.','upper'),
   ('Monedes i potenciadors','Guanya 10 punts de cursa per segon i 20 per moneda. Els combos i reptes donen bonificacions. L’escut protegeix d’una col·lisió; l’imant atrau monedes.','Observa com es recullen les monedes.','coins'),
-  ('Tria el repte','Infinit no té límit. Sprint dura 60 segons i Expedició 120. Pots pausar i desar la cursa. Els punts de botiga s’afegeixen en acabar.','Consulta l’objectiu i comença a jugar.','modes')]
+  ('Tria el repte','Infinit no té límit. Sprint dura 60 segons i Expedició 120. Pots posar la cursa en pausa i desar-la. Els punts de botiga s’afegeixen en acabar.','Consulta l’objectiu i comença a jugar.','modes')]
 }
 _GUIDE_PANEL = (55,170,590,307)
 
@@ -17546,7 +17554,7 @@ def guide_visual(kind,tag,reveal,area):
       if reveal: guide_fit('+60 punts',(405,300),TITLE_FONT,(53,105,61))
     if tag=='modes':
       guide_fit('Infinit   ·   60 s   ·   120 s',(350,280),TITLE_FONT,(56,65,49)); guide_fit('Sense límit     Sprint     Expedició',(350,314),SMALL,(56,65,49))
-      if reveal: guide_fit('Preparat per jugar!',(350,354),FONT,(40,105,67))
+      if reveal: guide_fit('Prepara’t per jugar!',(350,354),FONT,(40,105,67))
     else:
       # El dibuix del salt canvia amb el toc, sense alterar cap partida real.
       px=(390 if tag=='lanes' else 520 if tag=='upper' else 365) if reveal else (425 if tag=='upper' else 160); py=(270 if tag=='lanes' else 194 if tag=='upper' else 304) if reveal else (270 if tag=='upper' else 388)
@@ -18874,7 +18882,7 @@ def _menu_prefs7(self):
     p=prefs7(); opts=opts[:-1]+[
       ('sound_v7','SO: '+('ACTIU' if p['sound'] else 'SILENCI'),'Efectes sonors del joc',True),
       ('volume_v7',f"VOLUM: {p['volume']}%",'Prem per variar el volum',True),
-      ('motion_v7','ANIMACIONS: '+('ACTIU' if p['motion'] else 'REDUÏT'),'Transicions i efectes visuals',True),opts[-1]]
+      ('motion_v7','ANIMACIONS: '+('ACTIVES' if p['motion'] else 'REDUÏDES'),'Transicions i efectes visuals',True),opts[-1]]
     sub='Regles de Morris, so i animacions'
   return title,sub,opts,hint
 App.menu_def=_menu_prefs7
@@ -19024,9 +19032,9 @@ App.draw=_draw_feedback7
 
 # Revisió 2 — fons i cosmètics funcionals, i millores de Dino.
 _v2_old_background_surface=background_surface
-def background_surface(target,key=None,size=(WIDTH,HEIGHT)):
+def background_surface(target,key=None,size=(WIDTH,HEIGHT),fit=False):
   key=key if key is not None else SAVE['backgrounds'].get(target,'auto')
-  ck=('v2',target,key,tuple(size))
+  ck=('v2',target,key,tuple(size),fit)
   if ck in _BACKGROUND_CACHE: return _BACKGROUND_CACHE[ck]
   filename=BACKGROUND_THEMES.get(key,{}).get('image') if key!='auto' else None
   if key=='auto': path='textures/premium_stage.jpg' if target!='menu' else 'home/background.jpg'
@@ -19034,23 +19042,47 @@ def background_surface(target,key=None,size=(WIDTH,HEIGHT)):
   else: return _v2_old_background_surface(target,key,size)
   try:
     photo=pygame.image.load(os.path.join(_P_ASSETS,path)).convert()
-    iw,ih=photo.get_size();w,h=size; scale=max(w/iw,h/ih); pw,ph=max(w,round(iw*scale)),max(h,round(ih*scale))
-    photo=pygame.transform.smoothscale(photo,(pw,ph)); surf=pygame.Surface(size);surf.blit(photo,((w-pw)//2,(h-ph)//2))
+    iw,ih=photo.get_size();w,h=size
+    # Purchased photos keep their entire composition, with neutral margins.
+    scale=min(w/iw,h/ih) if fit and key!='auto' else max(w/iw,h/ih)
+    pw,ph=max(1,round(iw*scale)),max(1,round(ih*scale))
+    photo=pygame.transform.smoothscale(photo,(pw,ph)); surf=pygame.Surface(size);surf.fill(_P_DARK);surf.blit(photo,((w-pw)//2,(h-ph)//2))
     if w>600 or h>300:
       tint=pygame.Surface(size,pygame.SRCALPHA);tint.fill((12,27,31,125));surf.blit(tint,(0,0))
-    if len(_BACKGROUND_CACHE)>120: _BACKGROUND_CACHE.clear()
+    if len(_BACKGROUND_CACHE)>40: _BACKGROUND_CACHE.clear()
     _BACKGROUND_CACHE[ck]=surf;return surf
   except (OSError,pygame.error):return _v2_old_background_surface(target,key,size)
 
-_v2_old_draw_background=draw_background
+_FRAME_VIEW_KEY = None
+_FRAME_VIEW = None
+
 def draw_background(target):
-  global FRAME_COLOR,_FRAME_SURFACE,_BROWSER_FRAME
-  if target!='dino':return _v2_old_draw_background(target)
-  SCREEN.fill(_P_DARK); FRAME_COLOR=_P_DARK;_FRAME_SURFACE=None
-  if HAS_JS and _BROWSER_FRAME!='dino_v2':
-    try: js.window.eval("document.body.style.setProperty('background','#15292f','important');document.documentElement.style.setProperty('background','#15292f','important')")
-    except Exception: pass
-    _BROWSER_FRAME='dino_v2'
+  global FRAME_COLOR,_FRAME_SURFACE,_FRAME_VIEW_KEY,_FRAME_VIEW
+  FRAME_COLOR=_P_DARK; _FRAME_SURFACE=None
+  if target=='dino':
+    SCREEN.fill(_P_DARK); return
+  if target=='menu':
+    if globals().get('_P_SHOP_DRAWING',False):
+      im=premium_image('textures/premium_stage.jpg',SCREEN.get_size())
+      SCREEN.fill(_P_DARK)
+      if im is not None: SCREEN.blit(im,(0,0))
+    else:
+      SCREEN.blit(background_surface(target,size=SCREEN.get_size(),fit=True),(0,0))
+    return
+  # Render a single full-display photograph and use the corresponding central
+  # region behind the logical board. Outer and inner backgrounds are aligned.
+  display=pygame.display.get_surface()
+  size=display.get_size(); logical=SCREEN.get_size()
+  view=fitted_view(size,logical)
+  key=(target,SAVE['backgrounds'].get(target,'auto'),size,logical)
+  if key!=_FRAME_VIEW_KEY or _FRAME_VIEW is None:
+    frame=background_surface(target,size=size,fit=True)
+    crop=frame.subsurface(view)
+    middle=pygame.transform.smoothscale(crop,logical)
+    _FRAME_VIEW=(frame,middle); _FRAME_VIEW_KEY=key
+  _FRAME_SURFACE,middle=_FRAME_VIEW
+  SCREEN.blit(middle,(0,0))
+  # Browser body remains neutral; never publish a game image into CSS.
 
 # Keep each board's geometry but use its own material, not a recoloured flat fill.
 _v2_old_material=material_surface
@@ -19249,10 +19281,10 @@ def dino_landscape(g):
   global FRAME_COLOR,_FRAME_SURFACE
   name,top,bottom,far,near,sand,ink=dino_stage(g); ground=int(g.ground)
   custom=SAVE['backgrounds'].get('dino','auto')
-  if custom!='auto': image=background_surface('dino',custom,(840,ground))
+  if custom!='auto': image=background_surface('dino',custom,(WIDTH,ground),fit=True)
   else:image=premium_image('gameplay/dino_'+name+'.jpg',(840,ground))
   if image is not None:
-    offset=round(70+65*math.sin(g.distance*.00013));SCREEN.blit(image,(-offset,0))
+    offset=0 if custom!='auto' else round(70+65*math.sin(g.distance*.00013));SCREEN.blit(image,(-offset,0))
   else:SCREEN.fill((58,76,74))
   # The lower play lane is deliberately darker and quieter than the backdrop.
   ck=('dino_lane',ground)
