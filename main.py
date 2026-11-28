@@ -89,6 +89,7 @@ _HOME_SCREEN = None
 SCREEN = _GAME_SCREEN
 VIEW = (0, 0, WIDTH, HEIGHT)
 VIEW_SIZE = (WIDTH, HEIGHT)
+SIDEBAR_VIEW = None
 
 
 def select_screen(home=False):
@@ -120,18 +121,24 @@ def fitted_view(display_size, logical_size):
   sw,sh=max(1,int(lw*scale)),max(1,int(lh*scale))
   return ((w-sw)//2,(h-sh)//2,sw,sh)
 
-def present():
-  global VIEW, VIEW_SIZE, DISPLAY
+def present(app=None):
+  global VIEW, VIEW_SIZE, DISPLAY, SIDEBAR_VIEW
   DISPLAY = pygame.display.get_surface()
   w, h = DISPLAY.get_size()
   VIEW_SIZE = SCREEN.get_size()
-  VIEW = fitted_view((w,h),VIEW_SIZE)
+  SIDEBAR_VIEW = None
+  if app is not None:
+    _, VIEW, SIDEBAR_VIEW = _persistent_sidebar.layout((w,h), VIEW_SIZE)
+  else:
+    VIEW = fitted_view((w,h),VIEW_SIZE)
   sw,sh=VIEW[2:]
   DISPLAY.fill((21,41,47))
   # One full-canvas image, not tiled copies of the game viewport.
   if _FRAME_SURFACE is not None and _FRAME_SURFACE.get_size() == (w,h):
     DISPLAY.blit(_FRAME_SURFACE,(0,0))
   DISPLAY.blit(SCREEN if (sw, sh) == VIEW_SIZE else pygame.transform.smoothscale(SCREEN, (sw, sh)), VIEW[:2])
+  if app is not None and VIEW_SIZE != HOME_SIZE:
+    _persistent_sidebar.draw(pygame, DISPLAY, SIDEBAR_VIEW, app)
   pygame.display.flip()
 
 
@@ -16068,6 +16075,7 @@ HOME_TOOLS = {"shop":"Botiga", "settings":"Configuració", "saves":"Partides", "
 # Fase 1 — interfície independent, sense canvis en les mecàniques.
 import ratlla_home as _premium_home
 import ratlla_secondary as _premium_secondary
+import ratlla_sidebar as _persistent_sidebar
 
 
 def home_rects():
@@ -19073,8 +19081,8 @@ def draw_background(target):
   # region behind the logical board. Outer and inner backgrounds are aligned.
   display=pygame.display.get_surface()
   size=display.get_size(); logical=SCREEN.get_size()
-  view=fitted_view(size,logical)
-  key=(target,SAVE['backgrounds'].get(target,'auto'),size,logical)
+  _,view,_=_persistent_sidebar.layout(size,logical)
+  key=(target,SAVE['backgrounds'].get(target,'auto'),size,logical,view)
   if key!=_FRAME_VIEW_KEY or _FRAME_VIEW is None:
     frame=background_surface(target,size=size,fit=True)
     crop=frame.subsurface(view)
@@ -19354,12 +19362,13 @@ async def main():
     while app.running:
       app.frame_dt = min(0.1, clock.tick(60) / 1000.0)
       events = pygame.event.get()
+      events = _persistent_sidebar.route(pygame, app, events, SIDEBAR_VIEW, VIEW)
       events = [pygame.event.Event(e.type, {**e.dict, "pos": logical_pos(e.pos)})
                 if hasattr(e, "pos") else e for e in events]
       app.process(events)
       app.update()
       app.draw()
-      present()
+      present(app)
       app.bot_step()
       await asyncio.sleep(0)
   except Exception as exc:

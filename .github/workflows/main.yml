@@ -72,10 +72,10 @@ jobs:
               bottom: auto !important; right: auto !important;
               transform: translate(-50%, -50%) !important;
               margin: 0 !important; border: 0 !important; padding: 0 !important;
-              width: min(100vw, 177.777778vh) !important;
-              height: min(100vh, 56.25vw) !important;
-              width: min(100vw, 177.777778dvh) !important;
-              height: min(100dvh, 56.25vw) !important;
+              width: min(100vw, 127.058824vh) !important;
+              height: min(100vh, 78.703704vw) !important;
+              width: min(100vw, 127.058824dvh) !important;
+              height: min(100dvh, 78.703704vw) !important;
               touch-action: none;
               user-select: none; -webkit-user-select: none;
             }
